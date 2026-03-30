@@ -1,11 +1,9 @@
 services:
   - type: web
     name: insta-analytics-backend
-    env: python
-    rootDir: backend
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: PYTHONPATH=$PWD/.. alembic upgrade head && PYTHONPATH=$PWD/.. uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    runtime: python-3.12
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && alembic upgrade head && cd .. && python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /docs
     envVars:
       - key: DATABASE_URL
