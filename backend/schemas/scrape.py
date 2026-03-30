@@ -40,6 +40,13 @@ class CombinedScrapeRequest(BaseModel):
     enable_embeddings: bool = True
 
 
+class ScrapeStartRead(BaseModel):
+    status: str
+    profiles_count: int
+    run_id: int
+    action: Optional[str] = None
+
+
 class ScrapeRunListResponse(BaseModel):
     items: list[ScrapeRunRead]
     total: int

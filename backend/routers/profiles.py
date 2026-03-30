@@ -4,6 +4,7 @@ from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from backend.config import get_settings
 from backend.db.engine import get_db
@@ -73,6 +74,12 @@ async def get_profiles(
     )
     await _backfill_profile_pictures(db, list(items))
     return ProfileListResponse(items=items, total=total)
+
+
+@router.get("/usernames")
+async def get_profile_usernames(db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(select(Profile.username).order_by(Profile.username))
+    return {"usernames": result.scalars().all()}
 
 
 @router.get("/{username}", response_model=ProfileDetail)

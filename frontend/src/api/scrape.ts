@@ -20,6 +20,13 @@ export interface CombinedScrapeRequest {
   enable_embeddings?: boolean
 }
 
+export interface ScrapeStartResponse {
+  status: string
+  profiles_count: number
+  run_id: number
+  action?: string
+}
+
 export interface ProfilesSourceResponse {
   usernames: string[]
 }
@@ -45,7 +52,7 @@ export const triggerScrape = (body: ScrapeRequest): Promise<{ status: string; pr
     body: JSON.stringify(body),
   }).then(r => r.json())
 
-export const triggerCombinedScrape = (body: CombinedScrapeRequest): Promise<{ status: string; profiles_count: number; action: string }> =>
+export const triggerCombinedScrape = (body: CombinedScrapeRequest): Promise<ScrapeStartResponse> =>
   fetch(`${API_URL}/api/scrape/run/combined`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -13,6 +13,54 @@ import type { WisdomWarrior, InfluencerCategory, WisdomWarriorCreate } from "../
 
 type Tab = "Dedicated" | "In-house influencer"
 
+const FILTER_MENTIONS = [
+  "ishafoundation",
+  "adiyogi.official",
+  "sadhguru",
+  "sadhgurutamil",
+  "sadhgurutelugu",
+  "sadhguru.hindiofficial",
+  "sadhguru.malayalam",
+  "sadhguru_marathi_official",
+  "sadhgurubangla",
+  "sadhguru_kannada_official",
+]
+
+const FILTER_HASHTAGS = [
+  "Isha",
+  "Ishafoundation",
+  "Ishayogacenter",
+  "Sadhguru",
+  "Sadhgurujaggivasudev",
+  "Jaggi",
+  "Adiyogi",
+  "Linga Bhairavi",
+  "Adiyogishiva",
+  "ஈஷா",
+]
+
+const FILTER_CAPTION_KEYWORDS = [
+  "Isha",
+  "Ishafoundation",
+  "Ishayogacenter",
+  "Sadhguru",
+  "Sadhgurujaggivasudev",
+  "Jaggi",
+  "Adiyogi",
+  "Linga Bhairavi",
+  "Adiyogishiva",
+  "ஈஷா",
+  "ईशा",
+  "ఇషా",
+  "ഇഷ",
+  "ಇಶಾ",
+  "சத்குரு",
+  "సద్గురు",
+  "ಸದ್ಗುರು",
+  "സദ്‍ഗുരു",
+  "सद्गुरु",
+]
+
 const GRADE_COLORS: Record<string, string> = {
   A: "bg-emerald-900/60 text-emerald-300 border-emerald-700",
   B: "bg-blue-900/60 text-blue-300 border-blue-700",
@@ -36,6 +84,22 @@ function GradeBadge({ grade }: { grade: string | null }) {
   )
 }
 
+function MatchList({ values }: { values: string[] | undefined }) {
+  if (!values || values.length === 0) return <span className="text-gray-600 text-xs">—</span>
+  return (
+    <div className="flex flex-wrap gap-1">
+      {values.map(value => (
+        <span
+          key={value}
+          className="inline-flex items-center rounded-full border border-gray-700 bg-gray-900 px-2 py-0.5 text-[11px] text-gray-300"
+        >
+          {value}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 export default function WisdomWarriorsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("Dedicated")
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
@@ -50,7 +114,7 @@ export default function WisdomWarriorsPage() {
   const remove = useDeleteWisdomWarrior()
 
   const monthlyViewsByUsername = new Map(
-    monthlyViews.map(item => [item.username.toLowerCase(), item.total_views])
+    monthlyViews.map(item => [item.username.toLowerCase(), item])
   )
 
   const rows = all.filter(w => w.category === activeTab)
@@ -128,6 +192,29 @@ export default function WisdomWarriorsPage() {
         ))}
       </div>
 
+      <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-200">View Count Filters</h2>
+          <p className="text-xs text-gray-400 mt-1">
+            Monthly views only include posts from {selectedMonth} that match at least one allowed hashtag, mention, or caption keyword.
+          </p>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-3">
+          <div>
+            <p className="text-xs font-medium text-gray-400 mb-2">Allowed Hashtags</p>
+            <MatchList values={FILTER_HASHTAGS} />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-400 mb-2">Allowed Mentions</p>
+            <MatchList values={FILTER_MENTIONS} />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-400 mb-2">Allowed Caption Keywords</p>
+            <MatchList values={FILTER_CAPTION_KEYWORDS} />
+          </div>
+        </div>
+      </div>
+
       {/* Table */}
       <div className="rounded-xl border border-gray-800 overflow-hidden">
         <table className="w-full text-sm">
@@ -141,26 +228,28 @@ export default function WisdomWarriorsPage() {
                   <span>Monthly Views ({selectedMonth})</span>
                   <div className="relative group">
                     <Info className="w-3.5 h-3.5 text-gray-500 cursor-help" />
-                    <div className="absolute left-1/2 -translate-x-1/2 top-5 z-10 hidden group-hover:block w-56 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-xs text-gray-300 shadow-lg normal-case tracking-normal font-normal">
-                      Views are collaborator-adjusted: each post's views are divided by the total number of creators (owner&nbsp;+&nbsp;collaborators).
+                    <div className="absolute left-1/2 -translate-x-1/2 top-5 z-10 hidden group-hover:block w-72 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-xs text-gray-300 shadow-lg normal-case tracking-normal font-normal">
+                      Views are collaborator-adjusted: each post's views are divided by the total number of creators (owner&nbsp;+&nbsp;collaborators). Only posts matching the allowed hashtag, mention, or caption keyword filters are counted.
                     </div>
                   </div>
                 </div>
               </th>
+              <th className="px-4 py-3 text-left font-medium">Hashtags</th>
+              <th className="px-4 py-3 text-left font-medium">Mentions</th>
               <th className="px-4 py-3 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
             {isLoading && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-500 text-sm">
+                <td colSpan={7} className="px-4 py-8 text-center text-gray-500 text-sm">
                   Loading…
                 </td>
               </tr>
             )}
             {!isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-500 text-sm">
+                <td colSpan={7} className="px-4 py-8 text-center text-gray-500 text-sm">
                   No {activeTab} influencers yet. Click <span className="text-purple-400">Add Influencer</span> to get started.
                 </td>
               </tr>
@@ -200,10 +289,16 @@ export default function WisdomWarriorsPage() {
                 <td className="px-4 py-3">
                   <GradeBadge grade={warrior.grade} />
                 </td>
-                <td className="px-4 py-3 text-gray-200">
+                <td className="px-4 py-3 text-gray-200 align-top">
                   {isMonthlyViewsLoading
                     ? "..."
-                    : Math.round(monthlyViewsByUsername.get(warrior.username.toLowerCase()) ?? 0).toLocaleString()}
+                    : Math.round(monthlyViewsByUsername.get(warrior.username.toLowerCase())?.total_views ?? 0).toLocaleString()}
+                </td>
+                <td className="px-4 py-3 align-top">
+                  <MatchList values={monthlyViewsByUsername.get(warrior.username.toLowerCase())?.matched_hashtags} />
+                </td>
+                <td className="px-4 py-3 align-top">
+                  <MatchList values={monthlyViewsByUsername.get(warrior.username.toLowerCase())?.matched_mentions} />
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-2">

@@ -16,3 +16,9 @@ export async function fetchProfile(username: string): Promise<ProfileDetail> {
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
+
+export async function fetchProfileUsernames(): Promise<{ usernames: string[] }> {
+  const res = await fetch(`${API_URL}/api/profiles/usernames`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}

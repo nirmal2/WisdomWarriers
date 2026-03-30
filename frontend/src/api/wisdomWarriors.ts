@@ -8,6 +8,8 @@ export interface WisdomWarriorMonthlyView {
   username: string
   month: string
   total_views: number
+  matched_hashtags: string[]
+  matched_mentions: string[]
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {

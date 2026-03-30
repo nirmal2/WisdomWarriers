@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { fetchProfilesSource, fetchScrapeStatus, triggerCombinedScrape, updateProfilesSource } from "../../api/scrape"
+import { fetchScrapeStatus, triggerCombinedScrape } from "../../api/scrape"
+import { fetchProfileUsernames } from "../../api/profiles"
 import { RecentRunsTable } from "../Dashboard/RecentRunsTable"
 
 function parseUsernames(value: string) {
@@ -9,7 +10,7 @@ function parseUsernames(value: string) {
 
 export default function ScrapePage() {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: ["profiles-source"], queryFn: fetchProfilesSource })
+  const { data } = useQuery({ queryKey: ["profile-usernames"], queryFn: fetchProfileUsernames })
   const [profilesText, setProfilesText] = useState("")
   const [activeRunId, setActiveRunId] = useState<number | undefined>(undefined)
   const [liveLogs, setLiveLogs] = useState<string[]>([])
@@ -57,17 +58,14 @@ export default function ScrapePage() {
 
   const handleCombinedScrape = async () => {
     setShowPostsModal(false)
-    setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Saving profiles and starting combined scrape...`].slice(-30))
+    const startedAt = new Date().toLocaleTimeString()
+    setLiveLogs([
+      `[${startedAt}] Starting combined scrape...`,
+      `[${startedAt}] Submitting ${usernames.length} profile(s) for scraping...`,
+    ])
     try {
-      // First save profiles
-      const saved = await updateProfilesSource(usernames)
-      setProfilesText(saved.usernames.join("\n"))
-      qc.invalidateQueries({ queryKey: ["profiles-source"] })
-      
-      // Then start combined scrape
-      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Starting combined scrape (Profiles → Posts) for ${saved.usernames.length} profile(s)...`].slice(-30))
       const req: Parameters<typeof triggerCombinedScrape>[0] = {
-        usernames: saved.usernames,
+        usernames: usernames,
         batch_mode: batchMode,
         results_limit: resultsLimit,
         data_detail_level: dataDetailLevel,
@@ -76,12 +74,13 @@ export default function ScrapePage() {
       if (newerThanValue.trim()) {
         req.only_posts_newer_than = newerThanValue.trim()
       }
-      await triggerCombinedScrape(req)
-      setActiveRunId(undefined)
-      qc.invalidateQueries({ queryKey: ["scrape-status"] })
+      const started = await triggerCombinedScrape(req)
+      setActiveRunId(started.run_id)
+      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Tracking run #${started.run_id}.`].slice(-120))
+      qc.invalidateQueries({ queryKey: ["scrape-status", started.run_id] })
       qc.invalidateQueries({ queryKey: ["runs"] })
     } catch {
-      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error during save or scrape`].slice(-30))
+      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error while starting scrape.`].slice(-120))
     }
   }
 
@@ -206,7 +205,7 @@ export default function ScrapePage() {
           placeholder="Enter one Instagram username per line"
         />
         <div className="flex items-center justify-between text-xs text-gray-400">
-          <span>Profiles will be saved and scraped when you click 'Scrape Wisdom Warriors'.</span>
+          <span>Profiles will be scraped when you click 'Scrape Wisdom Warriors'.</span>
           <span>Removes duplicates automatically.</span>
         </div>
         <div className="flex justify-center pt-2">

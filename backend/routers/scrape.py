@@ -17,6 +17,7 @@ from backend.schemas.scrape import (
     ScrapeDbUpdateStatus,
     ScrapeRequest,
     CombinedScrapeRequest,
+    ScrapeStartRead,
     ScrapeStatusRead,
     ScrapeRunRead,
     ScrapeRunListResponse,
@@ -28,8 +29,9 @@ from backend.repositories.scrape_profile_repo import (
     update_scrape_profile_fields,
     delete_scrape_profile,
 )
-from backend.services.scrape_service import run_posts_scrape, run_profiles_scrape, run_combined_scrape
+from backend.services.scrape_service import run_posts_scrape, run_profiles_scrape, run_combined_scrape, recover_posts_from_debug
 from backend.repositories.scrape_run_repo import (
+    create_run,
     get_latest_post_deltas,
     get_profile_deltas,
     get_run_compare_summary,
@@ -142,7 +144,7 @@ async def trigger_scrape(
     return {"status": "started", "profiles_count": len(usernames)}
 
 
-@router.post("/run/combined", response_model=dict)
+@router.post("/run/combined", response_model=ScrapeStartRead)
 async def trigger_combined_scrape(
     req: CombinedScrapeRequest,
     background: BackgroundTasks,
@@ -153,6 +155,18 @@ async def trigger_combined_scrape(
     Profiles are scraped first, then posts, using the same scraped_at timestamp for all records.
     """
     usernames = req.usernames or [row.username for row in await list_scrape_profiles(db)]
+    run = await create_run(db, {
+        "scraper_type": "combined",
+        "trigger": "manual",
+        "schedule_id": None,
+        "embedding_status": "pending" if req.enable_embeddings else "skipped",
+        "profiles_requested": len(usernames),
+        "raw_logs": json.dumps([
+            f"Combined scrape queued for {len(usernames)} profile(s).",
+            "Preparing profiles stage...",
+        ]),
+    })
+    await db.commit()
     background.add_task(
         run_combined_scrape,
         usernames,
@@ -164,8 +178,9 @@ async def trigger_combined_scrape(
         "manual",
         None,
         "on_demand",
+        run.id,
     )
-    return {"status": "started", "profiles_count": len(usernames), "action": "combined_scrape"}
+    return {"status": "started", "profiles_count": len(usernames), "action": "combined_scrape", "run_id": run.id}
 
 
 @router.get("/runs", response_model=ScrapeRunListResponse)
@@ -285,7 +300,16 @@ async def get_scrape_status(
         # For profile runs, missing/private users are still processed attempts.
         processed_count = min(run.profiles_requested, run.items_fetched + len(missing_usernames))
 
-    if run.status == "completed":
+    if run.scraper_type == "combined":
+        if run.status == "completed":
+            progress_pct = 100
+        elif posts_rows > 0 or run.items_fetched > 0:
+            progress_pct = min(99, 70 + min(run.items_fetched, 29))
+        elif profiles_touched > 0:
+            progress_pct = min(69, max(10, int((profiles_touched / max(run.profiles_requested, 1)) * 60)))
+        else:
+            progress_pct = 5
+    elif run.status == "completed":
         progress_pct = 100
     elif run.profiles_requested > 0:
         progress_pct = min(99, int((processed_count / max(run.profiles_requested, 1)) * 100))
@@ -303,6 +327,13 @@ async def get_scrape_status(
         logs.append("Run completed.")
     elif run.status == "failed":
         logs.append(f"Run failed: {run.error_message or 'unknown error'}")
+    elif run.scraper_type == "combined":
+        if posts_rows > 0:
+            logs.append(f"Posts stage is in progress. Persisted {posts_rows} post snapshot row(s) so far.")
+        elif profiles_touched > 0:
+            logs.append(f"Profiles stage is in progress. Persisted {profiles_touched}/{run.profiles_requested} profile(s) so far.")
+        else:
+            logs.append("Combined scrape is initializing...")
     else:
         profile_fetch_finished = False
         if run.scraper_type == "profiles" and aggregated_raw_logs:
@@ -361,6 +392,11 @@ async def skip_embedding(run_id: int, db: AsyncSession = Depends(get_db)) -> Scr
     await db.commit()
     await db.refresh(run)
     return run
+
+
+@router.post("/runs/{run_id}/recover-debug")
+async def recover_run_from_debug(run_id: int) -> dict:
+    return await recover_posts_from_debug(run_id)
 
 
 @router.get("/runs/compare", response_model=RunComparisonRead)
