@@ -4,7 +4,14 @@ from alembic import context
 import os, sys
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure imports work both locally and on platforms that run from backend/ as cwd.
+CURRENT_DIR = os.path.dirname(__file__)
+BACKEND_DIR = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
+REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
+for path in (REPO_ROOT, BACKEND_DIR):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
 from backend.db.base import Base
 from backend.config import get_settings
 import backend.models  # noqa: ensure all models registered
