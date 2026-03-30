@@ -85,6 +85,42 @@ See `backend/.env.example` and `frontend/.env.example`.
 | `VITE_API_URL` | Backend base URL for the frontend |
 
 ## Deployment
-- **Backend** → Render (Web Service, `uvicorn backend.main:app --host 0.0.0.0`)
-- **Frontend** → Vercel (`npm run build`, output `dist/`)
-- **Database** → Supabase (enable pgvector extension)
+
+### Option A: Render Blueprint (Backend + Frontend)
+
+This repo includes `render.yaml` for one-click provisioning on Render.
+
+1. In Render, click **New +** → **Blueprint**.
+2. Connect this GitHub repo: `https://github.com/nirmal2/WisdomWorriers`.
+3. Render will create:
+    - `insta-analytics-backend` (Python web service)
+    - `insta-analytics-frontend` (static site)
+4. Set backend env vars in Render dashboard:
+    - `DATABASE_URL` (Supabase/Postgres URL; use `postgresql+asyncpg://...`)
+    - `APIFY_TOKEN`
+    - `OPENAI_API_KEY`
+    - `CORS_ORIGINS` (must include your frontend URL)
+5. Set frontend env var:
+    - `VITE_API_URL` = your backend Render URL
+
+### Option B: Render (Backend) + Vercel (Frontend)
+
+Backend on Render:
+1. Create a new **Web Service** from this repo.
+2. Root directory: `backend`
+3. Build command: `pip install -r requirements.txt`
+4. Start command: `alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT`
+5. Add backend env vars listed above.
+
+Frontend on Vercel:
+1. Import this repo into Vercel.
+2. Set root directory to `frontend`.
+3. Set `VITE_API_URL` to your backend URL.
+4. Deploy.
+
+`frontend/vercel.json` is included so React Router deep links resolve to `index.html`.
+
+### Database Notes
+
+- Use Supabase PostgreSQL and enable extension: `vector`
+- For hosted Postgres with TLS, include `?ssl=require` in `DATABASE_URL` if needed
