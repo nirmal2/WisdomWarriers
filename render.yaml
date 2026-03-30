@@ -3,7 +3,7 @@ services:
     name: insta-analytics-backend
     runtime: python
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && alembic upgrade head && cd .. && python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    startCommand: alembic -c backend/alembic.ini upgrade head && python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /docs
     envVars:
       - key: DATABASE_URL
@@ -30,3 +30,4 @@ services:
     envVars:
       - key: VITE_API_URL
         value: https://insta-analytics-backend.onrender.com
+
