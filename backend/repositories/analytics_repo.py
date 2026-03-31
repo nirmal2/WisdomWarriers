@@ -148,7 +148,32 @@ async def get_post_volume(db: AsyncSession) -> list[dict]:
 
 
 async def get_wisdom_warriors_monthly_views(db: AsyncSession, month: str) -> list[dict]:
-    profile_result = await db.execute(select(ScrapeProfile).order_by(ScrapeProfile.position, ScrapeProfile.id))
+    return await get_wisdom_warriors_monthly_views_filtered(
+        db=db,
+        month=month,
+        apply_filters=True,
+        hashtags=WISDOM_WARRIOR_ALLOWED_HASHTAGS,
+        mentions=WISDOM_WARRIOR_ALLOWED_MENTIONS,
+        caption_keywords=WISDOM_WARRIOR_ALLOWED_CAPTION_KEYWORDS,
+        category=None,
+    )
+
+
+async def get_wisdom_warriors_monthly_views_filtered(
+    db: AsyncSession,
+    month: str,
+    apply_filters: bool,
+    hashtags: list[str] | None,
+    mentions: list[str] | None,
+    caption_keywords: list[str] | None,
+    category: str | None,
+) -> list[dict]:
+    profile_query = select(ScrapeProfile)
+    if category:
+        profile_query = profile_query.where(ScrapeProfile.category == category)
+    profile_query = profile_query.order_by(ScrapeProfile.position, ScrapeProfile.id)
+
+    profile_result = await db.execute(profile_query)
     profiles = profile_result.scalars().all()
     if not profiles:
         return []
@@ -161,6 +186,13 @@ async def get_wisdom_warriors_monthly_views(db: AsyncSession, month: str) -> lis
         .where(func.lower(Post.owner_username).in_(usernames))
     )
     posts = post_result.scalars().all()
+
+    active_hashtags = hashtags if hashtags else WISDOM_WARRIOR_ALLOWED_HASHTAGS
+    active_mentions = mentions if mentions else WISDOM_WARRIOR_ALLOWED_MENTIONS
+    active_caption_keywords = caption_keywords if caption_keywords else WISDOM_WARRIOR_ALLOWED_CAPTION_KEYWORDS
+    hashtag_map = {_normalize_hashtag(value): value for value in active_hashtags}
+    mention_map = {_normalize_mention(value): value for value in active_mentions}
+    keyword_matches = [value.casefold() for value in active_caption_keywords]
 
     summary_by_username: dict[str, dict] = {
         profile.username.casefold(): {
@@ -186,28 +218,34 @@ async def get_wisdom_warriors_monthly_views(db: AsyncSession, month: str) -> lis
         mentions = post.mentions or []
         caption_text = (post.caption or "").casefold()
 
-        matched_hashtags = sorted(
-            {
-                ALLOWED_HASHTAG_MAP[normalized]
-                for normalized in (_normalize_hashtag(value) for value in hashtags)
-                if normalized in ALLOWED_HASHTAG_MAP
-            }
-        )
-        matched_mentions = sorted(
-            {
-                ALLOWED_MENTION_MAP[normalized]
-                for normalized in (_normalize_mention(value) for value in mentions)
-                if normalized in ALLOWED_MENTION_MAP
-            }
-        )
-        caption_match = any(keyword in caption_text for keyword in ALLOWED_CAPTION_KEYWORDS)
+        matched_hashtags = []
+        matched_mentions = []
+        caption_match = False
 
-        if not matched_hashtags and not matched_mentions and not caption_match:
-            continue
+        if apply_filters:
+            matched_hashtags = sorted(
+                {
+                    hashtag_map[normalized]
+                    for normalized in (_normalize_hashtag(value) for value in hashtags)
+                    if normalized in hashtag_map
+                }
+            )
+            matched_mentions = sorted(
+                {
+                    mention_map[normalized]
+                    for normalized in (_normalize_mention(value) for value in mentions)
+                    if normalized in mention_map
+                }
+            )
+            caption_match = any(keyword in caption_text for keyword in keyword_matches)
+
+            if not matched_hashtags and not matched_mentions and not caption_match:
+                continue
 
         coauthor_count = len(post.coauthor_producers or [])
         summary["total_views"] += float(post.video_view_count or 0) / max(1, coauthor_count + 1)
-        summary["matched_hashtags"] = sorted(set(summary["matched_hashtags"]) | set(matched_hashtags))
-        summary["matched_mentions"] = sorted(set(summary["matched_mentions"]) | set(matched_mentions))
+        if apply_filters:
+            summary["matched_hashtags"] = sorted(set(summary["matched_hashtags"]) | set(matched_hashtags))
+            summary["matched_mentions"] = sorted(set(summary["matched_mentions"]) | set(matched_mentions))
 
     return [summary_by_username[profile.username.casefold()] for profile in profiles]

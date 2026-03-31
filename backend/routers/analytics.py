@@ -1,5 +1,5 @@
 import re
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.db.engine import get_db
 from backend.repositories.analytics_repo import (
@@ -9,7 +9,7 @@ from backend.repositories.analytics_repo import (
     get_hashtag_frequency,
     get_engagement_by_profile,
     get_post_volume,
-    get_wisdom_warriors_monthly_views,
+    get_wisdom_warriors_monthly_views_filtered,
 )
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -50,8 +50,21 @@ async def post_trends(db: AsyncSession = Depends(get_db)) -> list:
 @router.get("/wisdom-warriors/monthly-views")
 async def wisdom_warriors_monthly_views(
     month: str,
+    apply_filters: bool = True,
+    category: str | None = None,
+    hashtags: list[str] | None = Query(default=None),
+    mentions: list[str] | None = Query(default=None),
+    keywords: list[str] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list:
     if not re.fullmatch(r"\d{4}-\d{2}", month):
         raise HTTPException(status_code=400, detail="month must be in YYYY-MM format")
-    return await get_wisdom_warriors_monthly_views(db, month)
+    return await get_wisdom_warriors_monthly_views_filtered(
+        db=db,
+        month=month,
+        apply_filters=apply_filters,
+        hashtags=hashtags,
+        mentions=mentions,
+        caption_keywords=keywords,
+        category=category,
+    )

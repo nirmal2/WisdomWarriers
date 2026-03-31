@@ -5,6 +5,7 @@ import {
   updateWisdomWarrior,
   deleteWisdomWarrior,
   fetchWisdomWarriorsMonthlyViews,
+  type WisdomWarriorMonthlyViewsQuery,
 } from "../api/wisdomWarriors"
 import type { WisdomWarriorCreate, WisdomWarriorUpdate } from "../types/wisdomWarrior"
 
@@ -14,11 +15,11 @@ export function useWisdomWarriors() {
   return useQuery({ queryKey: QK, queryFn: fetchWisdomWarriors })
 }
 
-export function useWisdomWarriorsMonthlyViews(month: string) {
+export function useWisdomWarriorsMonthlyViews(query?: WisdomWarriorMonthlyViewsQuery) {
   return useQuery({
-    queryKey: [...QK, "monthly-views", month],
-    queryFn: () => fetchWisdomWarriorsMonthlyViews(month),
-    enabled: !!month,
+    queryKey: [...QK, "monthly-views", query],
+    queryFn: () => fetchWisdomWarriorsMonthlyViews(query as WisdomWarriorMonthlyViewsQuery),
+    enabled: Boolean(query?.month),
   })
 }
 

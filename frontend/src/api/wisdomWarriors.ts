@@ -12,6 +12,15 @@ export interface WisdomWarriorMonthlyView {
   matched_mentions: string[]
 }
 
+export interface WisdomWarriorMonthlyViewsQuery {
+  month: string
+  applyFilters: boolean
+  category?: string
+  hashtags?: string[]
+  mentions?: string[]
+  keywords?: string[]
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
@@ -41,5 +50,13 @@ export const updateWisdomWarrior = (id: number, body: WisdomWarriorUpdate): Prom
 export const deleteWisdomWarrior = (id: number): Promise<void> =>
   fetch(`${BASE}/${id}`, { method: "DELETE" }).then(r => handleResponse<void>(r))
 
-export const fetchWisdomWarriorsMonthlyViews = (month: string): Promise<WisdomWarriorMonthlyView[]> =>
-  fetch(`${ANALYTICS_BASE}?month=${encodeURIComponent(month)}`).then(r => handleResponse<WisdomWarriorMonthlyView[]>(r))
+export const fetchWisdomWarriorsMonthlyViews = (query: WisdomWarriorMonthlyViewsQuery): Promise<WisdomWarriorMonthlyView[]> => {
+  const qs = new URLSearchParams()
+  qs.set("month", query.month)
+  qs.set("apply_filters", String(query.applyFilters))
+  if (query.category) qs.set("category", query.category)
+  for (const value of query.hashtags ?? []) qs.append("hashtags", value)
+  for (const value of query.mentions ?? []) qs.append("mentions", value)
+  for (const value of query.keywords ?? []) qs.append("keywords", value)
+  return fetch(`${ANALYTICS_BASE}?${qs.toString()}`).then(r => handleResponse<WisdomWarriorMonthlyView[]>(r))
+}

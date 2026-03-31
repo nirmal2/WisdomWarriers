@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type Dispatch, type SetStateAction } from "react"
 import { Info, Pencil, Trash2, UserPlus } from "lucide-react"
 import { clsx } from "clsx"
 import {
@@ -103,12 +103,29 @@ function MatchList({ values }: { values: string[] | undefined }) {
 export default function WisdomWarriorsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("Dedicated")
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [draftHashtags, setDraftHashtags] = useState<string[]>(FILTER_HASHTAGS)
+  const [draftMentions, setDraftMentions] = useState<string[]>(FILTER_MENTIONS)
+  const [draftKeywords, setDraftKeywords] = useState<string[]>(FILTER_CAPTION_KEYWORDS)
+  const [appliedHashtags, setAppliedHashtags] = useState<string[]>(FILTER_HASHTAGS)
+  const [appliedMentions, setAppliedMentions] = useState<string[]>(FILTER_MENTIONS)
+  const [appliedKeywords, setAppliedKeywords] = useState<string[]>(FILTER_CAPTION_KEYWORDS)
+  const [newHashtag, setNewHashtag] = useState("")
+  const [newMention, setNewMention] = useState("")
+  const [newKeyword, setNewKeyword] = useState("")
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<WisdomWarrior | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
 
   const { data: all = [], isLoading } = useWisdomWarriors()
-  const { data: monthlyViews = [], isLoading: isMonthlyViewsLoading } = useWisdomWarriorsMonthlyViews(selectedMonth)
+  const isInHouse = activeTab === "In-house influencer"
+  const { data: monthlyViews = [], isLoading: isMonthlyViewsLoading } = useWisdomWarriorsMonthlyViews({
+    month: selectedMonth,
+    applyFilters: isInHouse,
+    category: activeTab,
+    hashtags: isInHouse ? appliedHashtags : undefined,
+    mentions: isInHouse ? appliedMentions : undefined,
+    keywords: isInHouse ? appliedKeywords : undefined,
+  })
   const create = useCreateWisdomWarrior()
   const update = useUpdateWisdomWarrior()
   const remove = useDeleteWisdomWarrior()
@@ -135,6 +152,31 @@ export default function WisdomWarriorsPage() {
 
   function handleDelete(id: number) {
     remove.mutate(id, { onSuccess: () => setDeleteConfirm(null) })
+  }
+
+  function addFilterValue(value: string, setter: Dispatch<SetStateAction<string[]>>) {
+    const normalized = value.trim()
+    if (!normalized) return
+    setter(prev => (prev.some(v => v.toLowerCase() === normalized.toLowerCase()) ? prev : [...prev, normalized]))
+  }
+
+  function removeFilterValue(value: string, setter: Dispatch<SetStateAction<string[]>>) {
+    setter(prev => prev.filter(v => v !== value))
+  }
+
+  function applyFilters() {
+    setAppliedHashtags(draftHashtags)
+    setAppliedMentions(draftMentions)
+    setAppliedKeywords(draftKeywords)
+  }
+
+  function resetFilters() {
+    setDraftHashtags(FILTER_HASHTAGS)
+    setDraftMentions(FILTER_MENTIONS)
+    setDraftKeywords(FILTER_CAPTION_KEYWORDS)
+    setAppliedHashtags(FILTER_HASHTAGS)
+    setAppliedMentions(FILTER_MENTIONS)
+    setAppliedKeywords(FILTER_CAPTION_KEYWORDS)
   }
 
   const tabs: Tab[] = ["Dedicated", "In-house influencer"]
@@ -192,28 +234,136 @@ export default function WisdomWarriorsPage() {
         ))}
       </div>
 
-      <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 space-y-3">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-200">View Count Filters</h2>
-          <p className="text-xs text-gray-400 mt-1">
-            Monthly views only include posts from {selectedMonth} that match at least one allowed hashtag, mention, or caption keyword.
-          </p>
+      {isInHouse && (
+        <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-200">View Count Filters</h2>
+            <p className="text-xs text-gray-400 mt-1">
+              In-house monthly views only include posts from {selectedMonth} that match at least one allowed hashtag, mention, or caption keyword.
+            </p>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-3">
+            <div>
+              <p className="text-xs font-medium text-gray-400 mb-2">Allowed Hashtags</p>
+              <div className="flex gap-2 mb-2">
+                <input
+                  value={newHashtag}
+                  onChange={e => setNewHashtag(e.target.value)}
+                  placeholder="Add hashtag"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    addFilterValue(newHashtag, setDraftHashtags)
+                    setNewHashtag("")
+                  }}
+                  className="rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-200 hover:bg-gray-800"
+                >
+                  Add
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {draftHashtags.map(value => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => removeFilterValue(value, setDraftHashtags)}
+                    className="inline-flex items-center rounded-full border border-gray-700 bg-gray-900 px-2 py-0.5 text-[11px] text-gray-300 hover:border-red-700 hover:text-red-300"
+                    title="Remove"
+                  >
+                    {value} ×
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-400 mb-2">Allowed Mentions</p>
+              <div className="flex gap-2 mb-2">
+                <input
+                  value={newMention}
+                  onChange={e => setNewMention(e.target.value)}
+                  placeholder="Add mention"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    addFilterValue(newMention, setDraftMentions)
+                    setNewMention("")
+                  }}
+                  className="rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-200 hover:bg-gray-800"
+                >
+                  Add
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {draftMentions.map(value => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => removeFilterValue(value, setDraftMentions)}
+                    className="inline-flex items-center rounded-full border border-gray-700 bg-gray-900 px-2 py-0.5 text-[11px] text-gray-300 hover:border-red-700 hover:text-red-300"
+                    title="Remove"
+                  >
+                    {value} ×
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-gray-400 mb-2">Allowed Caption Keywords</p>
+              <div className="flex gap-2 mb-2">
+                <input
+                  value={newKeyword}
+                  onChange={e => setNewKeyword(e.target.value)}
+                  placeholder="Add keyword"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    addFilterValue(newKeyword, setDraftKeywords)
+                    setNewKeyword("")
+                  }}
+                  className="rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-200 hover:bg-gray-800"
+                >
+                  Add
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {draftKeywords.map(value => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => removeFilterValue(value, setDraftKeywords)}
+                    className="inline-flex items-center rounded-full border border-gray-700 bg-gray-900 px-2 py-0.5 text-[11px] text-gray-300 hover:border-red-700 hover:text-red-300"
+                    title="Remove"
+                  >
+                    {value} ×
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={applyFilters}
+              className="rounded-lg bg-purple-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-600"
+            >
+              Apply
+            </button>
+          </div>
         </div>
-        <div className="grid gap-3 lg:grid-cols-3">
-          <div>
-            <p className="text-xs font-medium text-gray-400 mb-2">Allowed Hashtags</p>
-            <MatchList values={FILTER_HASHTAGS} />
-          </div>
-          <div>
-            <p className="text-xs font-medium text-gray-400 mb-2">Allowed Mentions</p>
-            <MatchList values={FILTER_MENTIONS} />
-          </div>
-          <div>
-            <p className="text-xs font-medium text-gray-400 mb-2">Allowed Caption Keywords</p>
-            <MatchList values={FILTER_CAPTION_KEYWORDS} />
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* Table */}
       <div className="rounded-xl border border-gray-800 overflow-hidden">
@@ -229,7 +379,9 @@ export default function WisdomWarriorsPage() {
                   <div className="relative group">
                     <Info className="w-3.5 h-3.5 text-gray-500 cursor-help" />
                     <div className="absolute left-1/2 -translate-x-1/2 top-5 z-10 hidden group-hover:block w-72 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-xs text-gray-300 shadow-lg normal-case tracking-normal font-normal">
-                      Views are collaborator-adjusted: each post's views are divided by the total number of creators (owner&nbsp;+&nbsp;collaborators). Only posts matching the allowed hashtag, mention, or caption keyword filters are counted.
+                      {isInHouse
+                        ? "Views are collaborator-adjusted: each post's views are divided by the total number of creators (owner + collaborators). Only posts matching the applied hashtag, mention, or caption keyword filters are counted."
+                        : "Views are collaborator-adjusted: each post's views are divided by the total number of creators (owner + collaborators)."}
                     </div>
                   </div>
                 </div>
