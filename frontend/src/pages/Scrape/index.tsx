@@ -8,6 +8,8 @@ function parseUsernames(value: string) {
   return Array.from(new Set(value.split(/\r?\n/).map(line => line.trim()).filter(Boolean)))
 }
 
+const APIFY_TOKEN_STORAGE_KEY = "wisdom-warriors.apify-token"
+
 export default function ScrapePage() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ["profile-usernames"], queryFn: fetchProfileUsernames })
@@ -20,6 +22,7 @@ export default function ScrapePage() {
   const [dataDetailLevel, setDataDetailLevel] = useState<"basicData" | "detailedData">("basicData")
   const [batchMode, setBatchMode] = useState(true)
   const [enableEmbeddings, setEnableEmbeddings] = useState(true)
+  const [apifyToken, setApifyToken] = useState("")
   const usernames = parseUsernames(profilesText)
 
   const { data: statusData } = useQuery({
@@ -56,6 +59,20 @@ export default function ScrapePage() {
     }
   }, [data])
 
+  useEffect(() => {
+    const storedToken = window.localStorage.getItem(APIFY_TOKEN_STORAGE_KEY)
+    if (storedToken) setApifyToken(storedToken)
+  }, [])
+
+  useEffect(() => {
+    const trimmed = apifyToken.trim()
+    if (trimmed) {
+      window.localStorage.setItem(APIFY_TOKEN_STORAGE_KEY, trimmed)
+    } else {
+      window.localStorage.removeItem(APIFY_TOKEN_STORAGE_KEY)
+    }
+  }, [apifyToken])
+
   const handleCombinedScrape = async () => {
     setShowPostsModal(false)
     const startedAt = new Date().toLocaleTimeString()
@@ -73,6 +90,9 @@ export default function ScrapePage() {
       }
       if (newerThanValue.trim()) {
         req.only_posts_newer_than = newerThanValue.trim()
+      }
+      if (apifyToken.trim()) {
+        req.apify_token = apifyToken.trim()
       }
       const started = await triggerCombinedScrape(req)
       setActiveRunId(started.run_id)
@@ -145,6 +165,19 @@ export default function ScrapePage() {
                   <option value="basicData">Basic data (faster, cheaper)</option>
                   <option value="detailedData">Detailed data (includes video play count, alt text, music info)</option>
                 </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-gray-300">APIFY token override (optional)</label>
+                <input
+                  type="password"
+                  placeholder="Leave blank to use the backend default token"
+                  value={apifyToken}
+                  onChange={e => setApifyToken(e.target.value)}
+                  className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
+                />
+                <p className="text-xs text-gray-500">
+                  This value is stored only in this browser for Admin convenience and is used for manual Wisdom Warriors scrapes.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-gray-300">Profile send mode</label>

@@ -23,9 +23,10 @@ def run_posts_actor(
     results_limit: int = 100,
     only_posts_newer_than: str | None = None,
     data_detail_level: str = "basicData",
+    apify_token: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     settings = get_settings()
-    client = get_apify_client()
+    client = get_apify_client(apify_token)
     prepared_usernames = _prepare_usernames(usernames)
     effective_results_limit = max(results_limit, len(prepared_usernames))
     run_input: dict[str, Any] = {

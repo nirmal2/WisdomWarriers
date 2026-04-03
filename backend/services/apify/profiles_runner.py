@@ -3,9 +3,12 @@ from backend.services.apify.client import get_apify_client
 from backend.config import get_settings
 
 
-def run_profiles_actor(usernames: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+def run_profiles_actor(
+    usernames: list[str],
+    apify_token: str | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
     settings = get_settings()
-    client = get_apify_client()
+    client = get_apify_client(apify_token)
     run_input: dict[str, Any] = {
         "usernames": usernames,
         "includeAboutSection": False,

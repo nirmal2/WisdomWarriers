@@ -141,6 +141,7 @@ async def run_posts_scrape(
     enable_embeddings: bool = True,
     existing_run_id: int | None = None,
     finalize_run: bool = True,
+    apify_token: str | None = None,
 ) -> int:
     async with AsyncSessionLocal() as db:
         await _purge_ignored_instagram_account(db)
@@ -178,7 +179,8 @@ async def run_posts_scrape(
             # Run the synchronous Apify call in a thread so the event loop stays free
             result = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(
-                    None, partial(run_posts_actor, usernames, results_limit, only_posts_newer_than, data_detail_level)
+                    None,
+                    partial(run_posts_actor, usernames, results_limit, only_posts_newer_than, data_detail_level, apify_token),
                 ),
                 timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
             )
@@ -303,6 +305,7 @@ async def run_profiles_scrape(
     enable_embeddings: bool = True,
     existing_run_id: int | None = None,
     finalize_run: bool = True,
+    apify_token: str | None = None,
 ) -> int:
     async with AsyncSessionLocal() as db:
         await _purge_ignored_instagram_account(db)
@@ -364,7 +367,7 @@ async def run_profiles_scrape(
             if batch_mode:
                 result = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(
-                        None, partial(run_profiles_actor, usernames)
+                        None, partial(run_profiles_actor, usernames, apify_token)
                     ),
                     timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
                 )
@@ -378,7 +381,7 @@ async def run_profiles_scrape(
                 async def _fetch_profile_batch(username: str):
                     return await asyncio.wait_for(
                         asyncio.get_event_loop().run_in_executor(
-                            None, partial(run_profiles_actor, [username])
+                            None, partial(run_profiles_actor, [username], apify_token)
                         ),
                         timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
                     )
@@ -523,6 +526,7 @@ async def run_combined_scrape(
     schedule_id: int | None = None,
     frequency: str = "on_demand",
     combined_run_id: int | None = None,
+    apify_token: str | None = None,
 ) -> None:
     """
     Orchestrates a combined profile + post scrape in sequence using a shared timestamp.
@@ -549,6 +553,7 @@ async def run_combined_scrape(
         enable_embeddings=enable_embeddings,
         existing_run_id=combined_run_id,
         finalize_run=False,
+        apify_token=apify_token,
     )
 
     if combined_run_id is not None:
@@ -570,6 +575,7 @@ async def run_combined_scrape(
         enable_embeddings=enable_embeddings,
         existing_run_id=combined_run_id,
         finalize_run=True,
+        apify_token=apify_token,
     )
 
 

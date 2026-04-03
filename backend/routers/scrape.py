@@ -137,12 +137,26 @@ async def trigger_scrape(
             None,
             req.batch_mode,
             req.enable_embeddings,
+            None,
+            True,
+            req.apify_token,
         )
     else:
         background.add_task(
-            run_posts_scrape, usernames, "posts", "manual", None,
-            req.results_limit, req.only_posts_newer_than, "on_demand",
-            req.data_detail_level, None, req.enable_embeddings,
+            run_posts_scrape,
+            usernames,
+            "posts",
+            "manual",
+            None,
+            req.results_limit,
+            req.only_posts_newer_than,
+            "on_demand",
+            req.data_detail_level,
+            None,
+            req.enable_embeddings,
+            None,
+            True,
+            req.apify_token,
         )
     return {"status": "started", "profiles_count": len(usernames)}
 
@@ -182,6 +196,7 @@ async def trigger_combined_scrape(
         None,
         "on_demand",
         run.id,
+        req.apify_token,
     )
     return {"status": "started", "profiles_count": len(usernames), "action": "combined_scrape", "run_id": run.id}
 

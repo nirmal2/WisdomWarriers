@@ -28,6 +28,7 @@ class ScrapeRequest(BaseModel):
     only_posts_newer_than: Optional[str] = None
     data_detail_level: Literal["basicData", "detailedData"] = "basicData"
     enable_embeddings: bool = True
+    apify_token: Optional[str] = None
 
 
 class CombinedScrapeRequest(BaseModel):
@@ -38,6 +39,7 @@ class CombinedScrapeRequest(BaseModel):
     only_posts_newer_than: Optional[str] = None
     data_detail_level: Literal["basicData", "detailedData"] = "basicData"
     enable_embeddings: bool = True
+    apify_token: Optional[str] = None
 
 
 class ScrapeStartRead(BaseModel):

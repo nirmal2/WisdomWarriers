@@ -9,6 +9,7 @@ export interface ScrapeRequest {
   only_posts_newer_than?: string
   data_detail_level?: "basicData" | "detailedData"
   enable_embeddings?: boolean
+  apify_token?: string
 }
 
 export interface CombinedScrapeRequest {
@@ -18,6 +19,7 @@ export interface CombinedScrapeRequest {
   only_posts_newer_than?: string
   data_detail_level?: "basicData" | "detailedData"
   enable_embeddings?: boolean
+  apify_token?: string
 }
 
 export interface ScrapeStartResponse {
