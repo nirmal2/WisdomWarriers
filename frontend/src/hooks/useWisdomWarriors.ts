@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   fetchWisdomWarriors,
   createWisdomWarrior,
+  createWisdomWarriorsBulk,
   updateWisdomWarrior,
   deleteWisdomWarrior,
   fetchWisdomWarriorsMonthlyViews,
@@ -27,6 +28,14 @@ export function useCreateWisdomWarrior() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: WisdomWarriorCreate) => createWisdomWarrior(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QK }),
+  })
+}
+
+export function useBulkCreateWisdomWarriors() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (items: WisdomWarriorCreate[]) => createWisdomWarriorsBulk(items),
     onSuccess: () => qc.invalidateQueries({ queryKey: QK }),
   })
 }

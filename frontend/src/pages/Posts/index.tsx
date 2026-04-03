@@ -1,9 +1,9 @@
-import { useState, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { usePosts } from "../../hooks/usePosts"
 import { PostFilters } from "./PostFilters"
 import { ColumnConfigurator } from "./ColumnConfig"
 import { DataTable } from "../../components/DataTable"
-import type { Post } from "../../types/post"
+import type { Post, PostQueryParams } from "../../types/post"
 import { format } from "date-fns"
 
 function toPreview(value: unknown, max = 80): string {
@@ -82,7 +82,9 @@ const ALL_COLUMNS = [
 ]
 
 export default function PostsPage() {
-  const [filters, setFilters] = useState<Record<string, string | number | undefined>>({})
+  const [filters, setFilters] = useState<PostQueryParams>({})
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
     new Set([
       "display_storage_url",
@@ -99,20 +101,40 @@ export default function PostsPage() {
       "latest_comments",
     ])
   )
-  const { data, isLoading } = usePosts({ ...filters, limit: 100 })
+
+  const offset = (page - 1) * pageSize
+  const { data, isLoading } = usePosts({ ...filters, limit: pageSize, offset })
 
   const displayColumns = useMemo(
     () => ALL_COLUMNS.filter(col => visibleColumns.has(col.key)),
     [visibleColumns]
   )
 
+  const total = data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const startRow = total === 0 ? 0 : offset + 1
+  const endRow = Math.min(offset + (data?.items.length ?? 0), total)
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [page, totalPages])
+
+  function handleFilterChange(params: PostQueryParams) {
+    setFilters(params)
+    setPage(1)
+  }
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Posts</h1>
       <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <PostFilters onFilter={setFilters} />
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="flex-1">
+              <PostFilters onFilter={handleFilterChange} />
+            </div>
             <ColumnConfigurator
               availableColumns={ALL_COLUMNS.map(c => ({ key: c.key, label: c.label }))}
               selectedColumns={visibleColumns}
@@ -120,10 +142,48 @@ export default function PostsPage() {
             />
           </div>
           {isLoading ? (
-            <p className="text-gray-400 py-8 text-center">Loading…</p>
+            <p className="py-8 text-center text-gray-400">Loading…</p>
           ) : (
             <>
-              <p className="text-xs text-gray-500">{data?.total ?? 0} posts</p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-gray-500">
+                  Showing {startRow}-{endRow} of {total} posts
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-xs text-gray-400">Rows per page</label>
+                  <select
+                    value={pageSize}
+                    onChange={e => {
+                      setPageSize(Number(e.target.value))
+                      setPage(1)
+                    }}
+                    className="rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-sm text-gray-200"
+                  >
+                    {[25, 50, 100, 200].map(size => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setPage(prev => Math.max(1, prev - 1))}
+                    disabled={page <= 1}
+                    className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-gray-300">
+                    Page {page} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={page >= totalPages}
+                    className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
               <DataTable<Post>
                 columns={displayColumns as any}
                 rows={data?.items ?? []}

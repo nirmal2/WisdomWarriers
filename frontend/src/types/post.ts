@@ -49,3 +49,20 @@ export interface PostListResponse {
   items: Post[]
   total: number
 }
+
+export interface PostQueryParams {
+  username?: string
+  type?: string
+  date_from?: string
+  date_to?: string
+  likes_min?: number
+  hashtag?: string
+  hashtags?: string[]
+  mentions?: string[]
+  keywords?: string[]
+  tagged_group?: string
+  period_label?: string
+  sort?: string
+  limit?: number
+  offset?: number
+}

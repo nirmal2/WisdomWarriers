@@ -77,6 +77,15 @@ class ScrapeProfileCreate(BaseModel):
     grade: Optional[str] = None
 
 
+class ScrapeProfileBulkCreate(BaseModel):
+    profiles: list[ScrapeProfileCreate]
+
+
+class ScrapeProfileBulkResult(BaseModel):
+    created: list[ScrapeProfileRead]
+    skipped_existing: list[str] = []
+
+
 class ScrapeProfileUpdate(BaseModel):
     username: Optional[str] = None
     category: Optional[str] = None

@@ -13,6 +13,8 @@ from backend.schemas.scrape import (
     ProfilesSourceUpdate,
     ScrapeProfileRead,
     ScrapeProfileCreate,
+    ScrapeProfileBulkCreate,
+    ScrapeProfileBulkResult,
     ScrapeProfileUpdate,
     ScrapeDbUpdateStatus,
     ScrapeRequest,
@@ -26,6 +28,7 @@ from backend.repositories.scrape_profile_repo import (
     list_scrape_profiles,
     replace_scrape_profiles,
     add_scrape_profile,
+    add_scrape_profiles_bulk,
     update_scrape_profile_fields,
     delete_scrape_profile,
 )
@@ -466,6 +469,26 @@ async def create_wisdom_warrior(body: ScrapeProfileCreate, db: AsyncSession = De
     await db.commit()
     await db.refresh(profile)
     return profile
+
+
+@router.post("/wisdom-warriors/bulk", response_model=ScrapeProfileBulkResult, status_code=201)
+async def bulk_create_wisdom_warriors(
+    body: ScrapeProfileBulkCreate,
+    db: AsyncSession = Depends(get_db),
+) -> ScrapeProfileBulkResult:
+    if not body.profiles:
+        raise HTTPException(status_code=400, detail="profiles is required")
+
+    created, skipped_existing = await add_scrape_profiles_bulk(
+        db,
+        [item.model_dump() for item in body.profiles],
+    )
+    await db.commit()
+
+    return ScrapeProfileBulkResult(
+        created=[ScrapeProfileRead.model_validate(profile) for profile in created],
+        skipped_existing=skipped_existing,
+    )
 
 
 @router.patch("/wisdom-warriors/{profile_id}", response_model=ScrapeProfileRead)

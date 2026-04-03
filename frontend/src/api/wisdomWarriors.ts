@@ -1,5 +1,10 @@
 import { API_URL } from "../config"
-import type { WisdomWarrior, WisdomWarriorCreate, WisdomWarriorUpdate } from "../types/wisdomWarrior"
+import type {
+  WisdomWarrior,
+  WisdomWarriorBulkResult,
+  WisdomWarriorCreate,
+  WisdomWarriorUpdate,
+} from "../types/wisdomWarrior"
 
 const BASE = `${API_URL}/api/scrape/wisdom-warriors`
 const ANALYTICS_BASE = `${API_URL}/api/analytics/wisdom-warriors/monthly-views`
@@ -39,6 +44,13 @@ export const createWisdomWarrior = (body: WisdomWarriorCreate): Promise<WisdomWa
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   }).then(r => handleResponse<WisdomWarrior>(r))
+
+export const createWisdomWarriorsBulk = (profiles: WisdomWarriorCreate[]): Promise<WisdomWarriorBulkResult> =>
+  fetch(`${BASE}/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profiles }),
+  }).then(r => handleResponse<WisdomWarriorBulkResult>(r))
 
 export const updateWisdomWarrior = (id: number, body: WisdomWarriorUpdate): Promise<WisdomWarrior> =>
   fetch(`${BASE}/${id}`, {

@@ -16,6 +16,11 @@ export interface WisdomWarriorCreate {
   grade?: InfluencerGrade | null
 }
 
+export interface WisdomWarriorBulkResult {
+  created: WisdomWarrior[]
+  skipped_existing: string[]
+}
+
 export interface WisdomWarriorUpdate {
   username?: string
   category?: InfluencerCategory | null

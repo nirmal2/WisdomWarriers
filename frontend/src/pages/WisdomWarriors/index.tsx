@@ -1,15 +1,17 @@
-import { useState, type Dispatch, type SetStateAction } from "react"
-import { Info, Pencil, Trash2, UserPlus } from "lucide-react"
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react"
+import { Info, Pencil, Trash2, Upload, UserPlus } from "lucide-react"
 import { clsx } from "clsx"
 import {
   useWisdomWarriors,
   useWisdomWarriorsMonthlyViews,
   useCreateWisdomWarrior,
+  useBulkCreateWisdomWarriors,
   useUpdateWisdomWarrior,
   useDeleteWisdomWarrior,
 } from "../../hooks/useWisdomWarriors"
 import { InfluencerModal } from "./InfluencerModal"
-import type { WisdomWarrior, InfluencerCategory, WisdomWarriorCreate } from "../../types/wisdomWarrior"
+import { BulkInfluencerModal } from "./BulkInfluencerModal"
+import type { WisdomWarrior, InfluencerCategory, InfluencerGrade, WisdomWarriorCreate } from "../../types/wisdomWarrior"
 
 type Tab = "Dedicated" | "In-house influencer"
 
@@ -70,6 +72,8 @@ const GRADE_COLORS: Record<string, string> = {
   Inactive: "bg-gray-800 text-gray-400 border-gray-600",
 }
 
+const GRADE_ORDER: InfluencerGrade[] = ["A", "B", "C", "D", "E", "Inactive"]
+
 function GradeBadge({ grade }: { grade: string | null }) {
   if (!grade) return <span className="text-gray-600 text-xs">—</span>
   return (
@@ -113,8 +117,10 @@ export default function WisdomWarriorsPage() {
   const [newMention, setNewMention] = useState("")
   const [newKeyword, setNewKeyword] = useState("")
   const [showModal, setShowModal] = useState(false)
+  const [showBulkModal, setShowBulkModal] = useState(false)
   const [editing, setEditing] = useState<WisdomWarrior | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
+  const [bulkMessage, setBulkMessage] = useState("")
 
   const { data: all = [], isLoading } = useWisdomWarriors()
   const isInHouse = activeTab === "In-house influencer"
@@ -127,6 +133,7 @@ export default function WisdomWarriorsPage() {
     keywords: isInHouse ? appliedKeywords : undefined,
   })
   const create = useCreateWisdomWarrior()
+  const bulkCreate = useBulkCreateWisdomWarriors()
   const update = useUpdateWisdomWarrior()
   const remove = useDeleteWisdomWarrior()
 
@@ -135,11 +142,39 @@ export default function WisdomWarriorsPage() {
   )
 
   const rows = all.filter(w => w.category === activeTab)
+  const gradeSummaries = useMemo(() => {
+    const viewsByUsername = new Map(monthlyViews.map(item => [item.username.toLowerCase(), item.total_views]))
+    return GRADE_ORDER.map(grade => {
+      const influencers = rows.filter(warrior => warrior.grade === grade)
+      const totalViews = influencers.reduce(
+        (sum, warrior) => sum + (viewsByUsername.get(warrior.username.toLowerCase()) ?? 0),
+        0
+      )
+      return { grade, count: influencers.length, totalViews }
+    })
+  }, [monthlyViews, rows])
 
   function handleCreate(data: WisdomWarriorCreate) {
     // Force the category to match the active tab when adding from that tab
     const payload = { ...data, category: (data.category ?? activeTab) as InfluencerCategory }
-    create.mutate(payload, { onSuccess: () => setShowModal(false) })
+    create.mutate(payload, {
+      onSuccess: () => {
+        setBulkMessage("")
+        setShowModal(false)
+      },
+    })
+  }
+
+  function handleBulkCreate(items: WisdomWarriorCreate[]) {
+    bulkCreate.mutate(items, {
+      onSuccess: result => {
+        const messageParts: string[] = []
+        if (result.created.length > 0) messageParts.push(`Added ${result.created.length} influencer(s)`)
+        if (result.skipped_existing.length > 0) messageParts.push(`Skipped ${result.skipped_existing.length} existing`)
+        setBulkMessage(messageParts.join(" • ") || "No new influencers were added.")
+        setShowBulkModal(false)
+      },
+    })
   }
 
   function handleEdit(data: WisdomWarriorCreate) {
@@ -202,10 +237,17 @@ export default function WisdomWarriorsPage() {
           </div>
           <button
             onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-purple-700 hover:bg-purple-600 text-white rounded-lg transition-colors"
+            className="flex items-center gap-2 rounded-lg bg-purple-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-purple-600"
           >
             <UserPlus size={15} />
             Add Influencer
+          </button>
+          <button
+            onClick={() => setShowBulkModal(true)}
+            className="flex items-center gap-2 rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition-colors hover:bg-gray-800"
+          >
+            <Upload size={15} />
+            Bulk Add
           </button>
         </div>
       </div>
@@ -231,6 +273,27 @@ export default function WisdomWarriorsPage() {
               {all.filter(w => w.category === tab).length}
             </span>
           </button>
+        ))}
+      </div>
+
+      {bulkMessage && (
+        <div className="rounded-lg border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-200">
+          {bulkMessage}
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        {gradeSummaries.map(summary => (
+          <div key={summary.grade} className="rounded-xl border border-gray-800 bg-gray-900/70 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <GradeBadge grade={summary.grade} />
+              <span className="text-[11px] text-gray-500">{summary.count} influencer(s)</span>
+            </div>
+            <div className="mt-3 text-xl font-semibold text-white">
+              {isMonthlyViewsLoading ? "..." : Math.round(summary.totalViews).toLocaleString()}
+            </div>
+            <p className="mt-1 text-[11px] text-gray-400">Total views for {summary.grade}</p>
+          </div>
         ))}
       </div>
 
@@ -506,6 +569,14 @@ export default function WisdomWarriorsPage() {
           onSubmit={handleCreate}
           onClose={() => setShowModal(false)}
           initialData={{ id: 0, username: "", category: activeTab, grade: null, position: 0 }}
+        />
+      )}
+      {showBulkModal && (
+        <BulkInfluencerModal
+          initialCategory={activeTab}
+          isSubmitting={bulkCreate.isPending}
+          onSubmit={handleBulkCreate}
+          onClose={() => setShowBulkModal(false)}
         />
       )}
       {editing && (
