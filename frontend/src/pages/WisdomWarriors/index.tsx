@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react"
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react"
 import { Info, Pencil, Trash2, Upload, UserPlus } from "lucide-react"
 import { clsx } from "clsx"
 import {
@@ -63,6 +63,30 @@ const FILTER_CAPTION_KEYWORDS = [
   "सद्गुरु",
 ]
 
+const WISDOM_WARRIORS_FILTERS_STORAGE_KEY = "insta-analytics.wisdom-warriors.in-house-filters"
+
+function getStoredWisdomFilterList(key: "hashtags" | "mentions" | "keywords", fallback: string[]) {
+  if (typeof window === "undefined") return fallback
+
+  try {
+    const raw = window.localStorage.getItem(WISDOM_WARRIORS_FILTERS_STORAGE_KEY)
+    if (!raw) return fallback
+
+    const parsed = JSON.parse(raw) as Partial<Record<"hashtags" | "mentions" | "keywords", string[]>>
+    const values = parsed[key]
+    if (!Array.isArray(values)) return fallback
+
+    const cleaned = values
+      .filter((value): value is string => typeof value === "string")
+      .map(value => value.trim())
+      .filter(Boolean)
+
+    return Array.from(new Set(cleaned))
+  } catch {
+    return fallback
+  }
+}
+
 const GRADE_COLORS: Record<string, string> = {
   A: "bg-emerald-900/60 text-emerald-300 border-emerald-700",
   B: "bg-blue-900/60 text-blue-300 border-blue-700",
@@ -111,12 +135,12 @@ function formatViewCount(value: number) {
 export default function WisdomWarriorsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("Dedicated")
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
-  const [draftHashtags, setDraftHashtags] = useState<string[]>(FILTER_HASHTAGS)
-  const [draftMentions, setDraftMentions] = useState<string[]>(FILTER_MENTIONS)
-  const [draftKeywords, setDraftKeywords] = useState<string[]>(FILTER_CAPTION_KEYWORDS)
-  const [appliedHashtags, setAppliedHashtags] = useState<string[]>(FILTER_HASHTAGS)
-  const [appliedMentions, setAppliedMentions] = useState<string[]>(FILTER_MENTIONS)
-  const [appliedKeywords, setAppliedKeywords] = useState<string[]>(FILTER_CAPTION_KEYWORDS)
+  const [draftHashtags, setDraftHashtags] = useState<string[]>(() => getStoredWisdomFilterList("hashtags", FILTER_HASHTAGS))
+  const [draftMentions, setDraftMentions] = useState<string[]>(() => getStoredWisdomFilterList("mentions", FILTER_MENTIONS))
+  const [draftKeywords, setDraftKeywords] = useState<string[]>(() => getStoredWisdomFilterList("keywords", FILTER_CAPTION_KEYWORDS))
+  const [appliedHashtags, setAppliedHashtags] = useState<string[]>(() => getStoredWisdomFilterList("hashtags", FILTER_HASHTAGS))
+  const [appliedMentions, setAppliedMentions] = useState<string[]>(() => getStoredWisdomFilterList("mentions", FILTER_MENTIONS))
+  const [appliedKeywords, setAppliedKeywords] = useState<string[]>(() => getStoredWisdomFilterList("keywords", FILTER_CAPTION_KEYWORDS))
   const [newHashtag, setNewHashtag] = useState("")
   const [newMention, setNewMention] = useState("")
   const [newKeyword, setNewKeyword] = useState("")
@@ -180,6 +204,17 @@ export default function WisdomWarriorsPage() {
     () => gradeSummaries.reduce((sum, summary) => sum + summary.totalViews, 0),
     [gradeSummaries]
   )
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      WISDOM_WARRIORS_FILTERS_STORAGE_KEY,
+      JSON.stringify({
+        hashtags: draftHashtags,
+        mentions: draftMentions,
+        keywords: draftKeywords,
+      })
+    )
+  }, [draftHashtags, draftMentions, draftKeywords])
 
   function handleCreate(data: WisdomWarriorCreate) {
     // Force the category to match the active tab when adding from that tab

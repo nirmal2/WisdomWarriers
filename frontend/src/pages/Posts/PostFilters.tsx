@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react"
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react"
 import type { PostQueryParams } from "../../types/post"
 
 const DEFAULT_HASHTAGS = [
@@ -53,6 +53,36 @@ interface FiltersProps {
   onFilter: (params: PostQueryParams) => void
 }
 
+const POSTS_FILTERS_STORAGE_KEY = "insta-analytics.posts.filter-lists"
+
+type PersistedPostFilterLists = {
+  hashtags?: string[]
+  mentions?: string[]
+  keywords?: string[]
+}
+
+function getStoredFilterList(key: keyof PersistedPostFilterLists, fallback: string[]) {
+  if (typeof window === "undefined") return fallback
+
+  try {
+    const raw = window.localStorage.getItem(POSTS_FILTERS_STORAGE_KEY)
+    if (!raw) return fallback
+
+    const parsed = JSON.parse(raw) as PersistedPostFilterLists
+    const values = parsed[key]
+    if (!Array.isArray(values)) return fallback
+
+    const cleaned = values
+      .filter((value): value is string => typeof value === "string")
+      .map(value => value.trim())
+      .filter(Boolean)
+
+    return Array.from(new Set(cleaned))
+  } catch {
+    return fallback
+  }
+}
+
 function addFilterValue(value: string, setter: Dispatch<SetStateAction<string[]>>) {
   const normalized = value.trim()
   if (!normalized) return
@@ -69,14 +99,21 @@ export function PostFilters({ onFilter }: FiltersProps) {
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
   const [likesMin, setLikesMin] = useState("")
-  const [hashtags, setHashtags] = useState<string[]>(DEFAULT_HASHTAGS)
-  const [mentions, setMentions] = useState<string[]>(DEFAULT_MENTIONS)
-  const [keywords, setKeywords] = useState<string[]>(DEFAULT_KEYWORDS)
+  const [hashtags, setHashtags] = useState<string[]>(() => getStoredFilterList("hashtags", DEFAULT_HASHTAGS))
+  const [mentions, setMentions] = useState<string[]>(() => getStoredFilterList("mentions", DEFAULT_MENTIONS))
+  const [keywords, setKeywords] = useState<string[]>(() => getStoredFilterList("keywords", DEFAULT_KEYWORDS))
   const [newHashtag, setNewHashtag] = useState("")
   const [newMention, setNewMention] = useState("")
   const [newKeyword, setNewKeyword] = useState("")
 
   const inputClass = "w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200"
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      POSTS_FILTERS_STORAGE_KEY,
+      JSON.stringify({ hashtags, mentions, keywords })
+    )
+  }, [hashtags, mentions, keywords])
 
   const apply = () => onFilter({
     username: username.trim() || undefined,
