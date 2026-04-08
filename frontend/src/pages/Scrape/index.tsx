@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { fetchScrapeStatus, triggerCombinedScrape } from "../../api/scrape"
+import { fetchScrapeStatus, triggerCombinedScrape, triggerScrape } from "../../api/scrape"
 import { fetchProfileUsernames } from "../../api/profiles"
 import { RecentRunsTable } from "../Dashboard/RecentRunsTable"
 
@@ -9,6 +9,20 @@ function parseUsernames(value: string) {
 }
 
 const APIFY_TOKEN_STORAGE_KEY = "wisdom-warriors.apify-token"
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+function getDerivedDaysValue(daysValue: string, dateFrom: string) {
+  const trimmed = daysValue.trim()
+  if (trimmed) return trimmed
+  if (!dateFrom) return ""
+
+  const from = new Date(`${dateFrom}T00:00:00`)
+  if (Number.isNaN(from.getTime())) return ""
+
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return String(Math.max(0, Math.ceil((today.getTime() - from.getTime()) / MS_PER_DAY)))
+}
 
 export default function ScrapePage() {
   const qc = useQueryClient()
@@ -19,10 +33,14 @@ export default function ScrapePage() {
   const [showPostsModal, setShowPostsModal] = useState(false)
   const [resultsLimit, setResultsLimit] = useState(100)
   const [newerThanValue, setNewerThanValue] = useState("")
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
   const [dataDetailLevel, setDataDetailLevel] = useState<"basicData" | "detailedData">("basicData")
+  const [includeProfileScrape, setIncludeProfileScrape] = useState(false)
   const [batchMode, setBatchMode] = useState(true)
   const [enableEmbeddings, setEnableEmbeddings] = useState(true)
   const [apifyToken, setApifyToken] = useState("")
+  const [isScrapeLocked, setIsScrapeLocked] = useState(false)
   const usernames = parseUsernames(profilesText)
 
   const { data: statusData } = useQuery({
@@ -34,6 +52,10 @@ export default function ScrapePage() {
   const secondPostScraperCount = statusData?.run?.scraper_type === "posts"
     ? statusData.run.items_fetched
     : (statusData?.db_updates.posts_rows ?? 0)
+  const currentRunStatus = statusData?.run?.status
+  const isScrapeBusy = isScrapeLocked || currentRunStatus === "running"
+  const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
+  const effectiveDaysValue = getDerivedDaysValue(newerThanValue, dateFrom)
 
   useEffect(() => {
     if (!statusData?.run) return
@@ -65,6 +87,13 @@ export default function ScrapePage() {
   }, [])
 
   useEffect(() => {
+    if (!isScrapeLocked) return
+    if (currentRunStatus === "completed" || currentRunStatus === "failed") {
+      setIsScrapeLocked(false)
+    }
+  }, [currentRunStatus, isScrapeLocked])
+
+  useEffect(() => {
     const trimmed = apifyToken.trim()
     if (trimmed) {
       window.localStorage.setItem(APIFY_TOKEN_STORAGE_KEY, trimmed)
@@ -74,10 +103,13 @@ export default function ScrapePage() {
   }, [apifyToken])
 
   const handleCombinedScrape = async () => {
-    setShowPostsModal(false)
+    if (isScrapeBusy || usernames.length === 0 || hasInvalidDateRange) return
+
     const startedAt = new Date().toLocaleTimeString()
+    const modeLabel = includeProfileScrape ? "combined scrape" : "posts-only scrape"
+    setIsScrapeLocked(true)
     setLiveLogs([
-      `[${startedAt}] Starting combined scrape...`,
+      `[${startedAt}] Starting ${modeLabel}...`,
       `[${startedAt}] Submitting ${usernames.length} profile(s) for scraping...`,
     ])
     try {
@@ -88,18 +120,28 @@ export default function ScrapePage() {
         data_detail_level: dataDetailLevel,
         enable_embeddings: enableEmbeddings,
       }
-      if (newerThanValue.trim()) {
-        req.only_posts_newer_than = newerThanValue.trim()
+      if (effectiveDaysValue) {
+        req.only_posts_newer_than = effectiveDaysValue
+      }
+      if (dateFrom) {
+        req.date_from = dateFrom
+      }
+      if (dateTo) {
+        req.date_to = dateTo
       }
       if (apifyToken.trim()) {
         req.apify_token = apifyToken.trim()
       }
-      const started = await triggerCombinedScrape(req)
+      const started = includeProfileScrape
+        ? await triggerCombinedScrape(req)
+        : await triggerScrape({ ...req, scraper_type: "posts" })
       setActiveRunId(started.run_id)
+      setShowPostsModal(false)
       setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Tracking run #${started.run_id}.`].slice(-120))
       qc.invalidateQueries({ queryKey: ["scrape-status", started.run_id] })
       qc.invalidateQueries({ queryKey: ["runs"] })
     } catch {
+      setIsScrapeLocked(false)
       setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error while starting scrape.`].slice(-120))
     }
   }
@@ -117,7 +159,7 @@ export default function ScrapePage() {
           <div className="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-900 p-6 shadow-2xl space-y-5">
             <div>
               <h2 className="text-base font-semibold text-gray-100">Scrape Wisdom Warriors</h2>
-              <p className="text-xs text-gray-400 mt-1">Configure profile & post scrape parameters. Profiles will be saved and scraped first, then posts.</p>
+              <p className="text-xs text-gray-400 mt-1">Configure the post scrape. Profile scraping is optional and is off by default.</p>
             </div>
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -131,28 +173,58 @@ export default function ScrapePage() {
                   className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-gray-300">Only posts newer than (optional)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="e.g. 15 days"
-                    value={newerThanValue}
-                    onChange={e => setNewerThanValue(e.target.value)}
-                    className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
-                  />
-                  {newerThanValue !== "" && (
-                    <button
-                      onClick={() => setNewerThanValue("")}
-                      className="text-gray-500 hover:text-gray-300 text-sm leading-none px-1"
-                      title="Clear"
-                    >✕</button>
-                  )}
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-gray-300">Days (optional)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      placeholder="e.g. 15"
+                      value={newerThanValue}
+                      onChange={e => setNewerThanValue(e.target.value)}
+                      className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
+                    />
+                    {newerThanValue !== "" && (
+                      <button
+                        onClick={() => setNewerThanValue("")}
+                        className="text-gray-500 hover:text-gray-300 text-sm leading-none px-1"
+                        title="Clear"
+                      >✕</button>
+                    )}
+                  </div>
                 </div>
-                {newerThanValue !== "" && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-gray-300">From</label>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={e => setDateFrom(e.target.value)}
+                      className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-gray-300">To</label>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      min={dateFrom || undefined}
+                      onChange={e => setDateTo(e.target.value)}
+                      className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Use Days, From, To, or both. The date range is applied exactly after scraping, and Days limits the fetch window.
+                </p>
+                {effectiveDaysValue !== "" && (
                   <p className="text-xs text-gray-500">
-                    Sent as: <span className="font-mono">{newerThanValue}</span>
+                    Sent as: <span className="font-mono">{effectiveDaysValue} days</span>
                   </p>
+                )}
+                {hasInvalidDateRange && (
+                  <p className="text-xs text-red-400">The To date must be on or after the From date.</p>
                 )}
               </div>
               <div className="space-y-1.5">
@@ -179,15 +251,27 @@ export default function ScrapePage() {
                   This value is stored only in this browser for Admin convenience and is used for manual Wisdom Warriors scrapes.
                 </p>
               </div>
+              <label className="flex items-start gap-3 rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeProfileScrape}
+                  onChange={e => setIncludeProfileScrape(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-600 accent-fuchsia-500"
+                />
+                <span className="space-y-1">
+                  <span className="block text-xs font-medium text-gray-300">Scrape profiles before posts</span>
+                  <span className="block text-xs text-gray-500">Optional. Leave this off for a faster posts-only scrape.</span>
+                </span>
+              </label>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-gray-300">Profile send mode</label>
+                <label className="text-xs font-medium text-gray-300">Post scraping mode</label>
                 <select
                   value={batchMode ? "batch" : "single"}
                   onChange={e => setBatchMode(e.target.value === "batch")}
                   className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                 >
-                  <option value="single">Send one profile per Apify call (safer)</option>
-                  <option value="batch">Send all profiles in one batch call (faster)</option>
+                  <option value="single">Scrape posts one profile at a time (safer)</option>
+                  <option value="batch">Scrape posts for all profiles in one batch (faster)</option>
                 </select>
               </div>
               <label className="flex items-start gap-3 rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-3 cursor-pointer">
@@ -212,10 +296,10 @@ export default function ScrapePage() {
               </button>
               <button
                 onClick={handleCombinedScrape}
-                disabled={!resultsLimit || resultsLimit < 1}
+                disabled={!resultsLimit || resultsLimit < 1 || isScrapeBusy || hasInvalidDateRange}
                 className="px-4 py-2 text-sm rounded-lg bg-gradient-to-r from-fuchsia-600 to-blue-600 hover:from-fuchsia-500 hover:to-blue-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
               >
-                Scrape Now
+                {isScrapeBusy ? "Scrape in Progress…" : "Scrape Now"}
               </button>
             </div>
           </div>
@@ -238,16 +322,20 @@ export default function ScrapePage() {
           placeholder="Enter one Instagram username per line"
         />
         <div className="flex items-center justify-between text-xs text-gray-400">
-          <span>Profiles will be scraped when you click 'Scrape Wisdom Warriors'.</span>
+          <span>
+            {isScrapeBusy
+              ? "Scrape in progress. The button will re-enable after the selected stages finish and the database updates complete."
+              : "The listed usernames are used for manual scrapes, and profile scraping can be turned on in the popup if needed."}
+          </span>
           <span>Removes duplicates automatically.</span>
         </div>
         <div className="flex justify-center pt-2">
           <button
             onClick={() => setShowPostsModal(true)}
             className="px-3 py-1.5 text-xs bg-fuchsia-600 hover:bg-fuchsia-500 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
-            disabled={usernames.length === 0}
+            disabled={usernames.length === 0 || isScrapeBusy}
           >
-            🧙 Scrape Wisdom Warriors
+            {isScrapeBusy ? "🧙 Scrape in Progress…" : "🧙 Scrape Wisdom Warriors"}
           </button>
         </div>
       </div>

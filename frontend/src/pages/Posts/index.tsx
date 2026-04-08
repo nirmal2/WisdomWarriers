@@ -17,6 +17,8 @@ function toPreview(value: unknown, max = 80): string {
   }
 }
 
+const POSTS_VISIBLE_COLUMNS_STORAGE_KEY = "insta-analytics.posts.visible-columns"
+
 const ALL_COLUMNS = [
   { key: "id", label: "ID", sortable: true, render: (r: Post) => toPreview(r.id, 28) },
   {
@@ -81,26 +83,60 @@ const ALL_COLUMNS = [
   { key: "url", label: "Link", sortable: true, render: (r: Post) => <a href={r.url} target="_blank" rel="noreferrer" className="text-blue-400 underline" onClick={e => e.stopPropagation()}>View</a> },
 ]
 
+const DEFAULT_VISIBLE_COLUMN_KEYS = [
+  "display_storage_url",
+  "owner_username",
+  "type",
+  "likes_count",
+  "comments_count",
+  "video_play_count",
+  "video_view_count",
+  "caption",
+  "first_comment",
+  "mentions",
+  "tagged_users",
+  "latest_comments",
+]
+
+const ALL_COLUMN_KEYS = new Set(ALL_COLUMNS.map(column => column.key))
+
+function getInitialVisibleColumns() {
+  const defaultSelection = new Set(DEFAULT_VISIBLE_COLUMN_KEYS)
+
+  if (typeof window === "undefined") {
+    return defaultSelection
+  }
+
+  try {
+    const raw = window.localStorage.getItem(POSTS_VISIBLE_COLUMNS_STORAGE_KEY)
+    if (!raw) {
+      return defaultSelection
+    }
+
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return defaultSelection
+    }
+
+    const validKeys = parsed.filter(
+      (key): key is string => typeof key === "string" && ALL_COLUMN_KEYS.has(key)
+    )
+
+    if (parsed.length > 0 && validKeys.length === 0) {
+      return defaultSelection
+    }
+
+    return new Set(validKeys)
+  } catch {
+    return defaultSelection
+  }
+}
+
 export default function PostsPage() {
   const [filters, setFilters] = useState<PostQueryParams>({})
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
-  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
-    new Set([
-      "display_storage_url",
-      "owner_username",
-      "type",
-      "likes_count",
-      "comments_count",
-      "video_play_count",
-      "video_view_count",
-      "caption",
-      "first_comment",
-      "mentions",
-      "tagged_users",
-      "latest_comments",
-    ])
-  )
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getInitialVisibleColumns)
 
   const offset = (page - 1) * pageSize
   const { data, isLoading } = usePosts({ ...filters, limit: pageSize, offset })
@@ -120,6 +156,13 @@ export default function PostsPage() {
       setPage(totalPages)
     }
   }, [page, totalPages])
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      POSTS_VISIBLE_COLUMNS_STORAGE_KEY,
+      JSON.stringify(Array.from(visibleColumns))
+    )
+  }, [visibleColumns])
 
   function handleFilterChange(params: PostQueryParams) {
     setFilters(params)

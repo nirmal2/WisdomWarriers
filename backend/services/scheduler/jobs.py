@@ -18,8 +18,13 @@ async def run_scheduled_job(schedule_id: int) -> None:
             await run_profiles_scrape(usernames, "scheduled", schedule_id, schedule.frequency)
         else:
             await run_posts_scrape(
-                usernames, "posts", "scheduled", schedule_id,
-                schedule.results_limit, schedule.only_posts_newer_than, schedule.frequency
+                usernames=usernames,
+                scraper_type="posts",
+                trigger="scheduled",
+                schedule_id=schedule_id,
+                results_limit=schedule.results_limit,
+                only_posts_newer_than=schedule.only_posts_newer_than,
+                frequency=schedule.frequency,
             )
         await update_schedule(db, schedule_id, {"last_run_at": datetime.now(timezone.utc)})
         await db.commit()

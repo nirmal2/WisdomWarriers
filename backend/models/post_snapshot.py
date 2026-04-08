@@ -7,7 +7,7 @@ class PostSnapshot(Base):
     __tablename__ = "post_snapshots"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    post_id = Column(Text, ForeignKey("posts.id"), nullable=False, index=True)
+    post_id = Column(Text, nullable=False, index=True)  # soft ref — history must survive post table resets
     run_id = Column(Integer, ForeignKey("scrape_runs.id"), nullable=True, index=True)
     owner_username = Column(Text, index=True)
     url = Column(Text, nullable=False, index=True)

@@ -104,6 +104,10 @@ function MatchList({ values }: { values: string[] | undefined }) {
   )
 }
 
+function formatViewCount(value: number) {
+  return Math.round(value).toLocaleString()
+}
+
 export default function WisdomWarriorsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("Dedicated")
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
@@ -124,35 +128,58 @@ export default function WisdomWarriorsPage() {
 
   const { data: all = [], isLoading } = useWisdomWarriors()
   const isInHouse = activeTab === "In-house influencer"
-  const { data: monthlyViews = [], isLoading: isMonthlyViewsLoading } = useWisdomWarriorsMonthlyViews({
+  const dedicatedMonthlyViewsQuery = useWisdomWarriorsMonthlyViews({
     month: selectedMonth,
-    applyFilters: isInHouse,
-    category: activeTab,
-    hashtags: isInHouse ? appliedHashtags : undefined,
-    mentions: isInHouse ? appliedMentions : undefined,
-    keywords: isInHouse ? appliedKeywords : undefined,
+    applyFilters: false,
+    category: "Dedicated",
   })
+  const inHouseMonthlyViewsQuery = useWisdomWarriorsMonthlyViews({
+    month: selectedMonth,
+    applyFilters: true,
+    category: "In-house influencer",
+    hashtags: appliedHashtags,
+    mentions: appliedMentions,
+    keywords: appliedKeywords,
+  })
+  const dedicatedMonthlyViews = dedicatedMonthlyViewsQuery.data ?? []
+  const inHouseMonthlyViews = inHouseMonthlyViewsQuery.data ?? []
+  const monthlyViews = isInHouse ? inHouseMonthlyViews : dedicatedMonthlyViews
+  const isMonthlyViewsLoading = isInHouse ? inHouseMonthlyViewsQuery.isLoading : dedicatedMonthlyViewsQuery.isLoading
+  const isCombinedTotalsLoading = dedicatedMonthlyViewsQuery.isLoading || inHouseMonthlyViewsQuery.isLoading
   const create = useCreateWisdomWarrior()
   const bulkCreate = useBulkCreateWisdomWarriors()
   const update = useUpdateWisdomWarrior()
   const remove = useDeleteWisdomWarrior()
 
-  const monthlyViewsByUsername = new Map(
-    monthlyViews.map(item => [item.username.toLowerCase(), item])
+  const monthlyViewsByUsername = useMemo(
+    () => new Map(monthlyViews.map(item => [item.username.toLowerCase(), item])),
+    [monthlyViews]
   )
 
-  const rows = all.filter(w => w.category === activeTab)
+  const rows = useMemo(() => all.filter(w => w.category === activeTab), [all, activeTab])
+  const dedicatedTotalViews = useMemo(
+    () => dedicatedMonthlyViews.reduce((sum, item) => sum + item.total_views, 0),
+    [dedicatedMonthlyViews]
+  )
+  const inHouseTotalViews = useMemo(
+    () => inHouseMonthlyViews.reduce((sum, item) => sum + item.total_views, 0),
+    [inHouseMonthlyViews]
+  )
+  const combinedMonthlyTotalViews = dedicatedTotalViews + inHouseTotalViews
   const gradeSummaries = useMemo(() => {
-    const viewsByUsername = new Map(monthlyViews.map(item => [item.username.toLowerCase(), item.total_views]))
     return GRADE_ORDER.map(grade => {
       const influencers = rows.filter(warrior => warrior.grade === grade)
       const totalViews = influencers.reduce(
-        (sum, warrior) => sum + (viewsByUsername.get(warrior.username.toLowerCase()) ?? 0),
+        (sum, warrior) => sum + (monthlyViewsByUsername.get(warrior.username.toLowerCase())?.total_views ?? 0),
         0
       )
       return { grade, count: influencers.length, totalViews }
     })
-  }, [monthlyViews, rows])
+  }, [monthlyViewsByUsername, rows])
+  const currentCategoryTotalViews = useMemo(
+    () => gradeSummaries.reduce((sum, summary) => sum + summary.totalViews, 0),
+    [gradeSummaries]
+  )
 
   function handleCreate(data: WisdomWarriorCreate) {
     // Force the category to match the active tab when adding from that tab
@@ -252,6 +279,34 @@ export default function WisdomWarriorsPage() {
         </div>
       </div>
 
+      <div className="rounded-xl border border-purple-800/60 bg-purple-950/30 p-4">
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-purple-300">Total views for {selectedMonth}</p>
+        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-3xl font-semibold text-white">
+              {isCombinedTotalsLoading ? "..." : formatViewCount(combinedMonthlyTotalViews)}
+            </p>
+            <p className="mt-1 text-xs text-gray-400">
+              Combined cumulative views from Dedicated and In-house influencers after all calculations and filters.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/70 px-3 py-2">
+              <p className="text-[11px] text-gray-400">Dedicated</p>
+              <p className="text-sm font-semibold text-white">
+                {dedicatedMonthlyViewsQuery.isLoading ? "..." : formatViewCount(dedicatedTotalViews)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-950/70 px-3 py-2">
+              <p className="text-[11px] text-gray-400">In-house influencer</p>
+              <p className="text-sm font-semibold text-white">
+                {inHouseMonthlyViewsQuery.isLoading ? "..." : formatViewCount(inHouseTotalViews)}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800">
         {tabs.map(tab => (
@@ -282,6 +337,16 @@ export default function WisdomWarriorsPage() {
         </div>
       )}
 
+      <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4">
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-gray-400">{activeTab} total views for {selectedMonth}</p>
+        <p className="mt-2 text-2xl font-semibold text-white">
+          {isMonthlyViewsLoading ? "..." : formatViewCount(currentCategoryTotalViews)}
+        </p>
+        <p className="mt-1 text-xs text-gray-400">
+          Cumulative of all grade categories after the current calculations{isInHouse ? " and applied filters" : ""}.
+        </p>
+      </div>
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         {gradeSummaries.map(summary => (
           <div key={summary.grade} className="rounded-xl border border-gray-800 bg-gray-900/70 p-3">
@@ -290,7 +355,7 @@ export default function WisdomWarriorsPage() {
               <span className="text-[11px] text-gray-500">{summary.count} influencer(s)</span>
             </div>
             <div className="mt-3 text-xl font-semibold text-white">
-              {isMonthlyViewsLoading ? "..." : Math.round(summary.totalViews).toLocaleString()}
+              {isMonthlyViewsLoading ? "..." : formatViewCount(summary.totalViews)}
             </div>
             <p className="mt-1 text-[11px] text-gray-400">Total views for {summary.grade}</p>
           </div>
@@ -507,7 +572,7 @@ export default function WisdomWarriorsPage() {
                 <td className="px-4 py-3 text-gray-200 align-top">
                   {isMonthlyViewsLoading
                     ? "..."
-                    : Math.round(monthlyViewsByUsername.get(warrior.username.toLowerCase())?.total_views ?? 0).toLocaleString()}
+                    : formatViewCount(monthlyViewsByUsername.get(warrior.username.toLowerCase())?.total_views ?? 0)}
                 </td>
                 <td className="px-4 py-3 align-top">
                   <MatchList values={monthlyViewsByUsername.get(warrior.username.toLowerCase())?.matched_hashtags} />

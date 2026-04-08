@@ -7,6 +7,8 @@ export interface ScrapeRequest {
   batch_mode?: boolean
   results_limit?: number
   only_posts_newer_than?: string
+  date_from?: string
+  date_to?: string
   data_detail_level?: "basicData" | "detailedData"
   enable_embeddings?: boolean
   apify_token?: string
@@ -17,6 +19,8 @@ export interface CombinedScrapeRequest {
   batch_mode?: boolean
   results_limit?: number
   only_posts_newer_than?: string
+  date_from?: string
+  date_to?: string
   data_detail_level?: "basicData" | "detailedData"
   enable_embeddings?: boolean
   apify_token?: string
@@ -47,7 +51,7 @@ export interface ScrapeStatusResponse {
   logs: string[]
 }
 
-export const triggerScrape = (body: ScrapeRequest): Promise<{ status: string; profiles_count: number }> =>
+export const triggerScrape = (body: ScrapeRequest): Promise<ScrapeStartResponse> =>
   fetch(`${API_URL}/api/scrape/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

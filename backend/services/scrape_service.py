@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from functools import partial
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,38 @@ async def _purge_ignored_instagram_account(db) -> None:
         await db.execute(delete(Profile).where(Profile.id.in_(profile_ids)))
 
     await db.commit()
+
+
+async def _reset_posts_table(db) -> int:
+    result = await db.execute(delete(Post))
+    await db.flush()
+    return result.rowcount or 0
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _is_timestamp_within_range(timestamp: datetime | None, date_from: str | None, date_to: str | None) -> bool:
+    start = _parse_iso_date(date_from)
+    end = _parse_iso_date(date_to)
+
+    if start is None and end is None:
+        return True
+    if timestamp is None:
+        return False
+
+    post_date = timestamp.date()
+    if start is not None and post_date < start:
+        return False
+    if end is not None and post_date > end:
+        return False
+    return True
 
 
 _DEBUG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "debug_output")
@@ -135,6 +167,8 @@ async def run_posts_scrape(
     schedule_id: int | None = None,
     results_limit: int = 100,
     only_posts_newer_than: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     frequency: str = "on_demand",
     data_detail_level: str = "basicData",
     shared_scraped_at: datetime | None = None,
@@ -164,16 +198,27 @@ async def run_posts_scrape(
                 "embedding_status": "pending" if enable_embeddings else "skipped",
                 "profiles_requested": len(usernames),
             })
-        await _append_run_log(db, run.id, f"Posts stage started for {len(usernames)} profile(s).")
-        await db.commit()
-
         scraped_at = shared_scraped_at or datetime.now(timezone.utc)
 
         period_label = derive_period_label(frequency)
         fetched = 0
+        skipped_outside_range = 0
+        deleted_posts = 0
         embedding_status = "pending" if enable_embeddings else "skipped"
         embedding_error_message: str | None = None
         try:
+            await _append_run_log(db, run.id, f"Posts stage started for {len(usernames)} profile(s).")
+            deleted_posts = await _reset_posts_table(db)
+            await _append_run_log(
+                db,
+                run.id,
+                f"Posts stage reset canonical posts table and removed {deleted_posts} existing row(s).",
+            )
+            await db.commit()
+            if date_from or date_to:
+                requested_window = f"{date_from or 'any'} → {date_to or 'any'}"
+                await _append_run_log(db, run.id, f"Posts stage date filter applied: {requested_window}.")
+                await db.commit()
             await _append_run_log(db, run.id, "Posts stage: waiting for Apify actor to return results...")
             await db.commit()
             # Run the synchronous Apify call in a thread so the event loop stays free
@@ -204,6 +249,9 @@ async def run_posts_scrape(
                 norm = normalize_post(raw)
                 url = norm.get("url", "")
                 if not url:
+                    continue
+                if not _is_timestamp_within_range(norm.get("timestamp"), date_from, date_to):
+                    skipped_outside_range += 1
                     continue
                 norm["id"] = _post_id(url, period_label)
 
@@ -519,6 +567,8 @@ async def run_combined_scrape(
     usernames: list[str],
     results_limit: int = 100,
     only_posts_newer_than: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     data_detail_level: str = "basicData",
     enable_embeddings: bool = True,
     batch_mode: bool = False,
@@ -569,6 +619,8 @@ async def run_combined_scrape(
         schedule_id=schedule_id,
         results_limit=results_limit,
         only_posts_newer_than=only_posts_newer_than,
+        date_from=date_from,
+        date_to=date_to,
         frequency=frequency,
         data_detail_level=data_detail_level,
         shared_scraped_at=shared_scraped_at,

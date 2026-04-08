@@ -26,6 +26,8 @@ class ScrapeRequest(BaseModel):
     batch_mode: bool = False
     results_limit: int = 100
     only_posts_newer_than: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
     data_detail_level: Literal["basicData", "detailedData"] = "basicData"
     enable_embeddings: bool = True
     apify_token: Optional[str] = None
@@ -37,6 +39,8 @@ class CombinedScrapeRequest(BaseModel):
     batch_mode: bool = False
     results_limit: int = 100
     only_posts_newer_than: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
     data_detail_level: Literal["basicData", "detailedData"] = "basicData"
     enable_embeddings: bool = True
     apify_token: Optional[str] = None

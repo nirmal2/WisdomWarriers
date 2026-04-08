@@ -120,45 +120,59 @@ async def update_profiles_source(body: ProfilesSourceUpdate, db: AsyncSession = 
     return ProfilesSourceRead(usernames=usernames)
 
 
-@router.post("/run", response_model=dict)
+@router.post("/run", response_model=ScrapeStartRead)
 async def trigger_scrape(
     req: ScrapeRequest,
     background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     usernames = req.usernames or [row.username for row in await list_scrape_profiles(db)]
+    run = await create_run(db, {
+        "scraper_type": req.scraper_type,
+        "trigger": "manual",
+        "schedule_id": None,
+        "embedding_status": "pending" if req.enable_embeddings else "skipped",
+        "profiles_requested": len(usernames),
+        "raw_logs": json.dumps([
+            f"{req.scraper_type.title()} scrape queued for {len(usernames)} profile(s).",
+        ]),
+    })
+    await db.commit()
+
     if req.scraper_type == "profiles":
         background.add_task(
             run_profiles_scrape,
-            usernames,
-            "manual",
-            None,
-            "on_demand",
-            None,
-            req.batch_mode,
-            req.enable_embeddings,
-            None,
-            True,
-            req.apify_token,
+            usernames=usernames,
+            trigger="manual",
+            schedule_id=None,
+            frequency="on_demand",
+            shared_scraped_at=None,
+            batch_mode=req.batch_mode,
+            enable_embeddings=req.enable_embeddings,
+            existing_run_id=run.id,
+            finalize_run=True,
+            apify_token=req.apify_token,
         )
     else:
         background.add_task(
             run_posts_scrape,
-            usernames,
-            "posts",
-            "manual",
-            None,
-            req.results_limit,
-            req.only_posts_newer_than,
-            "on_demand",
-            req.data_detail_level,
-            None,
-            req.enable_embeddings,
-            None,
-            True,
-            req.apify_token,
+            usernames=usernames,
+            scraper_type="posts",
+            trigger="manual",
+            schedule_id=None,
+            results_limit=req.results_limit,
+            only_posts_newer_than=req.only_posts_newer_than,
+            date_from=req.date_from,
+            date_to=req.date_to,
+            frequency="on_demand",
+            data_detail_level=req.data_detail_level,
+            shared_scraped_at=None,
+            enable_embeddings=req.enable_embeddings,
+            existing_run_id=run.id,
+            finalize_run=True,
+            apify_token=req.apify_token,
         )
-    return {"status": "started", "profiles_count": len(usernames)}
+    return {"status": "started", "profiles_count": len(usernames), "action": req.scraper_type, "run_id": run.id}
 
 
 @router.post("/run/combined", response_model=ScrapeStartRead)
@@ -186,17 +200,19 @@ async def trigger_combined_scrape(
     await db.commit()
     background.add_task(
         run_combined_scrape,
-        usernames,
-        req.results_limit,
-        req.only_posts_newer_than,
-        req.data_detail_level,
-        req.enable_embeddings,
-        req.batch_mode,
-        "manual",
-        None,
-        "on_demand",
-        run.id,
-        req.apify_token,
+        usernames=usernames,
+        results_limit=req.results_limit,
+        only_posts_newer_than=req.only_posts_newer_than,
+        date_from=req.date_from,
+        date_to=req.date_to,
+        data_detail_level=req.data_detail_level,
+        enable_embeddings=req.enable_embeddings,
+        batch_mode=req.batch_mode,
+        trigger="manual",
+        schedule_id=None,
+        frequency="on_demand",
+        combined_run_id=run.id,
+        apify_token=req.apify_token,
     )
     return {"status": "started", "profiles_count": len(usernames), "action": "combined_scrape", "run_id": run.id}
 
