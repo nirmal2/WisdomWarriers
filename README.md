@@ -124,3 +124,21 @@ Frontend on Vercel:
 
 - Use Supabase PostgreSQL and enable extension: `vector`
 - For hosted Postgres with TLS, include `?ssl=require` in `DATABASE_URL` if needed
+- `supabase_setup.sql` contains the base tables, indexes, and constraints for a fresh Supabase database
+- `supabase_analytics.sql` adds analytics views, materialized views, and helper functions after the base schema is in place
+
+### Supabase SQL Apply Order
+
+Run these scripts in order in the Supabase SQL Editor:
+
+1. `supabase_setup.sql`
+2. `supabase_analytics.sql`
+
+The analytics script includes:
+
+- Base analytics views such as `post_engagement`, `profile_follower_growth`, and `account_monthly_summary`
+- Materialized views for hashtag and posting-time analysis
+- `refresh_analytics_views()` to rebuild materialized analytics after a scrape run
+- `search_similar_posts(...)` for pgvector-based semantic post search
+
+`refresh_analytics_views()` uses non-concurrent refresh so it can be called safely from a Postgres function or Supabase RPC. The materialized views still keep unique indexes so you can run direct concurrent refreshes manually if needed.
