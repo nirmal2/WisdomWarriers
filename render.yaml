@@ -13,7 +13,7 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: CORS_ORIGINS
-        sync: false
+        value: http://localhost:5173,https://wisdom-worriers.vercel.app
       - key: APIFY_POSTS_ACTOR_ID
         value: xMc5Ga1oCONPmWJIa
       - key: APIFY_PROFILES_ACTOR_ID

@@ -99,7 +99,7 @@ This repo includes `render.yaml` for one-click provisioning on Render.
     - `DATABASE_URL` (Supabase/Postgres URL; use `postgresql+asyncpg://...`)
     - `APIFY_TOKEN`
     - `OPENAI_API_KEY`
-    - `CORS_ORIGINS` (must include your frontend URL)
+    - `CORS_ORIGINS` (defaults to `http://localhost:5173,https://wisdom-worriers.vercel.app`; add any additional frontend URLs if needed)
 5. Set frontend env var:
     - `VITE_API_URL` = your backend Render URL
 
@@ -110,7 +110,7 @@ Backend on Render:
 2. Root directory: `backend`
 3. Build command: `pip install -r requirements.txt`
 4. Start command: `alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT`
-5. Add backend env vars listed above.
+5. Add backend env vars listed above. If you override `CORS_ORIGINS`, make sure it still includes your deployed frontend origin.
 
 Frontend on Vercel:
 1. Import this repo into Vercel.
