@@ -499,7 +499,7 @@ async def get_wisdom_warriors_monthly_views_filtered(
             if not matched_hashtags and not matched_mentions and not caption_match:
                 continue
 
-        shared_views = float(post.video_view_count or 0) / max(1, len(participant_usernames))
+        shared_views = float(post.video_play_count or 0) / max(1, len(participant_usernames))
         for username_key in credited_usernames:
             summary = summary_by_username.get(username_key)
             if summary is None:
