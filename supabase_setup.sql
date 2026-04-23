@@ -215,7 +215,7 @@ create index if not exists profile_latest_posts_timestamp_idx on profile_latest_
 -- ============================================================
 create table if not exists post_snapshots (
     id                   serial primary key,
-    post_id              text not null references posts (id),
+    post_id              text not null,
     run_id               integer references scrape_runs (id),
     owner_username       text,
     url                  text not null,

@@ -17,6 +17,7 @@ from backend.repositories.analytics_repo import (
     get_scrape_run_summary,
     search_similar_posts,
     get_wisdom_warriors_monthly_views_filtered,
+    list_wisdom_warriors_snapshot_runs,
 )
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -117,6 +118,7 @@ async def wisdom_warriors_monthly_views(
     month: str,
     apply_filters: bool = True,
     category: str | None = None,
+    snapshot_run_id: int | None = None,
     hashtags: list[str] | None = Query(default=None),
     mentions: list[str] | None = Query(default=None),
     keywords: list[str] | None = Query(default=None),
@@ -132,4 +134,13 @@ async def wisdom_warriors_monthly_views(
         mentions=mentions,
         caption_keywords=keywords,
         category=category,
+        snapshot_run_id=snapshot_run_id,
     )
+
+
+@router.get("/wisdom-warriors/snapshot-runs")
+async def wisdom_warriors_snapshot_runs(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+) -> list:
+    return await list_wisdom_warriors_snapshot_runs(db, limit)

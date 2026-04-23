@@ -1,7 +1,7 @@
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.post import Post
+from backend.models.post_snapshot import PostSnapshot
 from backend.models.scrape_profile import ScrapeProfile
 from backend.services.embedding.client import embed_texts
 
@@ -394,6 +394,25 @@ async def get_wisdom_warriors_monthly_views(db: AsyncSession, month: str) -> lis
     )
 
 
+async def list_wisdom_warriors_snapshot_runs(db: AsyncSession, limit: int = 100) -> list[dict]:
+    result = await db.execute(
+        text(
+            """
+            SELECT
+                ps.run_id,
+                MAX(ps.scraped_at) AS scraped_at
+            FROM post_snapshots ps
+            WHERE ps.run_id IS NOT NULL
+            GROUP BY ps.run_id
+            ORDER BY MAX(ps.scraped_at) DESC
+            LIMIT :limit
+            """
+        ),
+        {"limit": limit},
+    )
+    return [dict(r) for r in result.mappings().all()]
+
+
 async def get_wisdom_warriors_monthly_views_filtered(
     db: AsyncSession,
     month: str,
@@ -402,6 +421,7 @@ async def get_wisdom_warriors_monthly_views_filtered(
     mentions: list[str] | None,
     caption_keywords: list[str] | None,
     category: str | None,
+    snapshot_run_id: int | None = None,
 ) -> list[dict]:
     all_profiles_result = await db.execute(
         select(ScrapeProfile.username).where(ScrapeProfile.username.is_not(None))
@@ -427,11 +447,36 @@ async def get_wisdom_warriors_monthly_views_filtered(
         for profile in profiles
         if profile.username and profile.username.strip()
     }
-    post_result = await db.execute(
-        select(Post)
-        .where(Post.timestamp.is_not(None))
-        .where(func.to_char(Post.timestamp, "YYYY-MM") == month)
+
+    resolved_snapshot_run_id = snapshot_run_id
+    if resolved_snapshot_run_id is None:
+        latest_snapshot_run = await db.execute(
+            select(PostSnapshot.run_id)
+            .where(PostSnapshot.run_id.is_not(None))
+            .order_by(PostSnapshot.scraped_at.desc().nullslast(), PostSnapshot.run_id.desc())
+            .limit(1)
+        )
+        resolved_snapshot_run_id = latest_snapshot_run.scalar_one_or_none()
+
+    if resolved_snapshot_run_id is None:
+        return [
+            {
+                "username": profile.username,
+                "month": month,
+                "total_views": 0.0,
+                "matched_hashtags": [],
+                "matched_mentions": [],
+            }
+            for profile in profiles
+        ]
+
+    post_query = (
+        select(PostSnapshot)
+        .where(PostSnapshot.timestamp.is_not(None))
+        .where(func.to_char(PostSnapshot.timestamp, "YYYY-MM") == month)
+        .where(PostSnapshot.run_id == resolved_snapshot_run_id)
     )
+    post_result = await db.execute(post_query)
     posts = post_result.scalars().all()
 
     active_hashtags = hashtags if hashtags else WISDOM_WARRIOR_ALLOWED_HASHTAGS

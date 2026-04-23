@@ -8,6 +8,12 @@ import type {
 
 const BASE = `${API_URL}/api/scrape/wisdom-warriors`
 const ANALYTICS_BASE = `${API_URL}/api/analytics/wisdom-warriors/monthly-views`
+const SNAPSHOT_RUNS_BASE = `${API_URL}/api/analytics/wisdom-warriors/snapshot-runs`
+
+export interface WisdomWarriorSnapshotRun {
+  run_id: number
+  scraped_at: string
+}
 
 export interface WisdomWarriorMonthlyView {
   username: string
@@ -20,6 +26,7 @@ export interface WisdomWarriorMonthlyView {
 export interface WisdomWarriorMonthlyViewsQuery {
   month: string
   applyFilters: boolean
+  snapshotRunId?: number
   category?: string
   hashtags?: string[]
   mentions?: string[]
@@ -66,9 +73,13 @@ export const fetchWisdomWarriorsMonthlyViews = (query: WisdomWarriorMonthlyViews
   const qs = new URLSearchParams()
   qs.set("month", query.month)
   qs.set("apply_filters", String(query.applyFilters))
+  if (typeof query.snapshotRunId === "number") qs.set("snapshot_run_id", String(query.snapshotRunId))
   if (query.category) qs.set("category", query.category)
   for (const value of query.hashtags ?? []) qs.append("hashtags", value)
   for (const value of query.mentions ?? []) qs.append("mentions", value)
   for (const value of query.keywords ?? []) qs.append("keywords", value)
   return fetch(`${ANALYTICS_BASE}?${qs.toString()}`).then(r => handleResponse<WisdomWarriorMonthlyView[]>(r))
 }
+
+export const fetchWisdomWarriorsSnapshotRuns = (): Promise<WisdomWarriorSnapshotRun[]> =>
+  fetch(`${SNAPSHOT_RUNS_BASE}?limit=100`).then(r => handleResponse<WisdomWarriorSnapshotRun[]>(r))
