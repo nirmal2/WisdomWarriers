@@ -231,6 +231,7 @@ create table if not exists post_snapshots (
     product_type         text,
     input_url            text,
     hashtags             jsonb default '[]',
+    mentions             jsonb default '[]',
     coauthor_producers   jsonb default '[]',
     period_label         text not null,
     scraped_at           timestamptz default now()
