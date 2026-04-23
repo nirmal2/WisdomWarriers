@@ -4,7 +4,6 @@ import { clsx } from "clsx"
 import {
   useWisdomWarriors,
   useWisdomWarriorsMonthlyViews,
-  useWisdomWarriorsSnapshotRuns,
   useCreateWisdomWarrior,
   useBulkCreateWisdomWarriors,
   useUpdateWisdomWarrior,
@@ -133,16 +132,13 @@ function formatViewCount(value: number) {
   return Math.round(value).toLocaleString()
 }
 
-function formatScrapedAt(value: string) {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
-  return parsed.toLocaleString()
+interface WisdomWarriorsPageProps {
+  selectedSnapshotRunId?: number
 }
 
-export default function WisdomWarriorsPage() {
+export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarriorsPageProps) {
   const [activeTab, setActiveTab] = useState<Tab>("Dedicated")
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
-  const [selectedSnapshotRunId, setSelectedSnapshotRunId] = useState<number | undefined>(undefined)
   const [draftHashtags, setDraftHashtags] = useState<string[]>(() => getStoredWisdomFilterList("hashtags", FILTER_HASHTAGS))
   const [draftMentions, setDraftMentions] = useState<string[]>(() => getStoredWisdomFilterList("mentions", FILTER_MENTIONS))
   const [draftKeywords, setDraftKeywords] = useState<string[]>(() => getStoredWisdomFilterList("keywords", FILTER_CAPTION_KEYWORDS))
@@ -159,15 +155,6 @@ export default function WisdomWarriorsPage() {
   const [bulkMessage, setBulkMessage] = useState("")
 
   const { data: all = [], isLoading } = useWisdomWarriors()
-  const snapshotRunsQuery = useWisdomWarriorsSnapshotRuns()
-  const snapshotRuns = snapshotRunsQuery.data ?? []
-
-  useEffect(() => {
-    if (selectedSnapshotRunId !== undefined) return
-    if (snapshotRuns.length === 0) return
-    setSelectedSnapshotRunId(snapshotRuns[0].run_id)
-  }, [selectedSnapshotRunId, snapshotRuns])
-
   const isInHouse = activeTab === "In-house influencer"
   const dedicatedMonthlyViewsQuery = useWisdomWarriorsMonthlyViews({
     month: selectedMonth,
@@ -187,8 +174,9 @@ export default function WisdomWarriorsPage() {
   const dedicatedMonthlyViews = dedicatedMonthlyViewsQuery.data ?? []
   const inHouseMonthlyViews = inHouseMonthlyViewsQuery.data ?? []
   const monthlyViews = isInHouse ? inHouseMonthlyViews : dedicatedMonthlyViews
-  const isMonthlyViewsLoading = snapshotRunsQuery.isLoading || (isInHouse ? inHouseMonthlyViewsQuery.isLoading : dedicatedMonthlyViewsQuery.isLoading)
-  const isCombinedTotalsLoading = snapshotRunsQuery.isLoading || dedicatedMonthlyViewsQuery.isLoading || inHouseMonthlyViewsQuery.isLoading
+  const isSnapshotSelectionPending = selectedSnapshotRunId === undefined
+  const isMonthlyViewsLoading = isSnapshotSelectionPending || (isInHouse ? inHouseMonthlyViewsQuery.isLoading : dedicatedMonthlyViewsQuery.isLoading)
+  const isCombinedTotalsLoading = isSnapshotSelectionPending || dedicatedMonthlyViewsQuery.isLoading || inHouseMonthlyViewsQuery.isLoading
   const create = useCreateWisdomWarrior()
   const bulkCreate = useBulkCreateWisdomWarriors()
   const update = useUpdateWisdomWarrior()
@@ -306,26 +294,6 @@ export default function WisdomWarriorsPage() {
           <p className="text-sm text-gray-400 mt-0.5">Manage influencer profiles tracked by the scraper</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <label htmlFor="scraped-at-select" className="text-xs text-gray-400">Last scraped at</label>
-            <select
-              id="scraped-at-select"
-              value={selectedSnapshotRunId ?? ""}
-              onChange={e => {
-                const next = e.target.value
-                setSelectedSnapshotRunId(next ? Number(next) : undefined)
-              }}
-              className="max-w-[240px] rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
-              disabled={snapshotRunsQuery.isLoading || snapshotRuns.length === 0}
-            >
-              {snapshotRuns.length === 0 && <option value="">No scraped dates</option>}
-              {snapshotRuns.map(run => (
-                <option key={run.run_id} value={run.run_id}>
-                  {formatScrapedAt(run.scraped_at)}
-                </option>
-              ))}
-            </select>
-          </div>
           <div className="flex items-center gap-2">
             <label htmlFor="month-select" className="text-xs text-gray-400">Month</label>
             <input

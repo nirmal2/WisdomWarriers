@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { BrowserRouter, Routes, Route, NavLink, useLocation } from "react-router-dom"
 import { LayoutDashboard, Users, FileText, CalendarClock, MessageSquare, Search, ShieldCheck, ChevronDown, ChevronRight, GitCompare, Swords } from "lucide-react"
@@ -14,6 +14,7 @@ import ScrapePage from "./pages/Scrape"
 import CompareRunsPage from "./pages/CompareRuns"
 import WisdomWarriorsPage from "./pages/WisdomWarriors"
 import { fetchScrapeStatus } from "./api/scrape"
+import { fetchWisdomWarriorsSnapshotRuns, type WisdomWarriorSnapshotRun } from "./api/wisdomWarriors"
 
 const NAV = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
@@ -162,16 +163,39 @@ function Sidebar() {
 }
 
 export default function App() {
+  const [selectedSnapshotRunId, setSelectedSnapshotRunId] = useState<number | undefined>(undefined)
+
   const { data: scrapeStatus } = useQuery({
     queryKey: ["global-last-scrape"],
     queryFn: () => fetchScrapeStatus(),
     refetchInterval: 15000,
   })
 
+  const { data: snapshotRuns = [] } = useQuery({
+    queryKey: ["global-snapshot-runs"],
+    queryFn: () => fetchWisdomWarriorsSnapshotRuns(),
+    refetchInterval: 30000,
+  })
+
+  useEffect(() => {
+    if (selectedSnapshotRunId !== undefined) return
+    if (snapshotRuns.length === 0) return
+    setSelectedSnapshotRunId(snapshotRuns[0].run_id)
+  }, [selectedSnapshotRunId, snapshotRuns])
+
+  const selectedSnapshotRun = useMemo(
+    () => snapshotRuns.find(run => run.run_id === selectedSnapshotRunId),
+    [snapshotRuns, selectedSnapshotRunId]
+  )
+
   const lastScrapedAt = scrapeStatus?.run?.finished_at ?? scrapeStatus?.run?.started_at
-  const lastScrapedLabel = lastScrapedAt
+  const fallbackLastScrapedLabel = lastScrapedAt
     ? new Date(lastScrapedAt).toLocaleString()
     : "Not available"
+
+  const selectedScrapedLabel = selectedSnapshotRun?.scraped_at
+    ? new Date(selectedSnapshotRun.scraped_at).toLocaleString()
+    : fallbackLastScrapedLabel
 
   return (
     <BrowserRouter>
@@ -179,11 +203,30 @@ export default function App() {
         <Sidebar />
         <main className="flex-1 overflow-y-auto pr-4 md:pr-6 lg:pr-8">
           <div className="sticky top-0 z-10 border-b border-gray-800 bg-gray-950/95 backdrop-blur px-4 py-2 text-xs text-gray-300">
-            Last scraped at: <span className="font-medium text-gray-100">{lastScrapedLabel}</span>
+            <div className="flex items-center gap-2">
+              <label htmlFor="global-scraped-at" className="text-gray-300">Last scraped at:</label>
+              <select
+                id="global-scraped-at"
+                value={selectedSnapshotRunId ?? ""}
+                onChange={e => {
+                  const value = e.target.value
+                  setSelectedSnapshotRunId(value ? Number(value) : undefined)
+                }}
+                className="min-w-[240px] rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100"
+                disabled={snapshotRuns.length === 0}
+              >
+                {snapshotRuns.length === 0 && <option value="">{selectedScrapedLabel}</option>}
+                {snapshotRuns.map((run: WisdomWarriorSnapshotRun) => (
+                  <option key={run.run_id} value={run.run_id}>
+                    {new Date(run.scraped_at).toLocaleString()}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/wisdom-warriors" element={<WisdomWarriorsPage />} />
+            <Route path="/wisdom-warriors" element={<WisdomWarriorsPage selectedSnapshotRunId={selectedSnapshotRunId} />} />
             <Route path="/scrape-instagram" element={<ScrapePage />} />
             <Route path="/scrape-instagram/hashtag-scraper" element={<ScrapePage />} />
             <Route path="/scrape-instagram/mentions-scraper" element={<ScrapePage />} />
@@ -193,7 +236,7 @@ export default function App() {
             <Route path="/profiles" element={<ProfilesPage />} />
             <Route path="/profiles/:username" element={<ProfileDetail />} />
             <Route path="/profiles/:username/tagged-posts" element={<TaggedPostsPage />} />
-            <Route path="/posts" element={<PostsPage />} />
+            <Route path="/posts" element={<PostsPage selectedSnapshotRunId={selectedSnapshotRunId} />} />
             <Route path="/schedules" element={<SchedulesPage />} />
             <Route path="/chat" element={<ChatPage />} />
           </Routes>

@@ -62,6 +62,7 @@ export interface PostQueryParams {
   keywords?: string[]
   tagged_group?: string
   period_label?: string
+  snapshot_run_id?: number
   sort?: string
   limit?: number
   offset?: number

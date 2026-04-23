@@ -94,10 +94,122 @@ async def list_posts(
     keywords: Sequence[str] | None = None,
     tagged_group: Optional[str] = None,
     period_label: Optional[str] = None,
+    snapshot_run_id: Optional[int] = None,
     sort: str = "likes_count",
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[Sequence[Post], int]:
+    if snapshot_run_id is not None:
+        q = select(PostSnapshot).where(PostSnapshot.run_id == snapshot_run_id)
+        parsed_date_from = _parse_iso_date(date_from)
+        parsed_date_to = _parse_iso_date(date_to)
+
+        if username:
+            q = q.where(PostSnapshot.owner_username == username)
+        if post_type:
+            q = q.where(func.lower(func.coalesce(PostSnapshot.type, "")).like(f"%{post_type.lower()}%"))
+        if parsed_date_from:
+            q = q.where(cast(PostSnapshot.timestamp, Date) >= parsed_date_from)
+        if parsed_date_to:
+            q = q.where(cast(PostSnapshot.timestamp, Date) <= parsed_date_to)
+        if likes_min is not None:
+            q = q.where(PostSnapshot.likes_count >= likes_min)
+
+        hashtag_terms = _clean_filter_values([*(hashtags or []), hashtag] if hashtag else hashtags)
+        mention_terms = _clean_filter_values(mentions)
+        keyword_terms = _clean_filter_values(keywords)
+
+        content_filters = []
+        if hashtag_terms:
+            hashtag_text = func.lower(func.coalesce(cast(PostSnapshot.hashtags, Text), ""))
+            content_filters.extend(hashtag_text.like(f"%{term.lower()}%") for term in hashtag_terms)
+        if mention_terms:
+            coauthor_text = func.lower(func.coalesce(cast(PostSnapshot.coauthor_producers, Text), ""))
+            content_filters.extend(coauthor_text.like(f"%{term.lower()}%") for term in mention_terms)
+        if keyword_terms:
+            caption_text = func.lower(func.coalesce(PostSnapshot.caption, ""))
+            content_filters.extend(caption_text.like(f"%{term.lower()}%") for term in keyword_terms)
+        if content_filters:
+            q = q.where(or_(*content_filters))
+
+        if tagged_group:
+            terms = TAGGED_GROUP_TERMS.get(tagged_group.lower(), [])
+            if terms:
+                q = q.where(
+                    or_(
+                        *[
+                            or_(
+                                func.lower(func.coalesce(PostSnapshot.caption, "")).like(f"%{term}%"),
+                                func.lower(func.coalesce(PostSnapshot.owner_username, "")).like(f"%{term}%"),
+                                func.lower(func.coalesce(cast(PostSnapshot.hashtags, Text), "")).like(f"%{term}%"),
+                                func.lower(func.coalesce(cast(PostSnapshot.coauthor_producers, Text), "")).like(f"%{term}%"),
+                            )
+                            for term in terms
+                        ]
+                    )
+                )
+        if period_label:
+            q = q.where(PostSnapshot.period_label == period_label)
+
+        count_result = await db.execute(select(func.count()).select_from(q.subquery()))
+        total = count_result.scalar_one()
+
+        sort_col = getattr(PostSnapshot, sort, PostSnapshot.likes_count)
+        q = q.order_by(sort_col.desc()).limit(limit).offset(offset)
+        result = await db.execute(q)
+        rows = result.scalars().all()
+
+        items = [
+            {
+                "id": row.post_id,
+                "source_post_id": None,
+                "short_code": None,
+                "owner_username": row.owner_username,
+                "owner_full_name": None,
+                "owner_id": None,
+                "owner_profile_pic_url": None,
+                "location_name": None,
+                "location_id": None,
+                "url": row.url,
+                "timestamp": row.timestamp,
+                "likes_count": row.likes_count or 0,
+                "video_play_count": row.video_play_count or 0,
+                "video_view_count": 0,
+                "type": row.type,
+                "video_url": row.video_url,
+                "audio_url": None,
+                "video_duration": None,
+                "display_url": row.display_url,
+                "display_storage_path": row.display_storage_path,
+                "display_storage_url": row.display_storage_url,
+                "dimensions_height": None,
+                "dimensions_width": None,
+                "is_comments_disabled": False,
+                "alt": None,
+                "caption": row.caption,
+                "product_type": row.product_type,
+                "input_url": row.input_url,
+                "comments_count": 0,
+                "first_comment": None,
+                "latest_comments": [],
+                "images": [],
+                "child_posts": [],
+                "music_info": {},
+                "hashtags": row.hashtags or [],
+                "mentions": [],
+                "tagged_users": [],
+                "coauthor_producers": row.coauthor_producers or [],
+                "is_pinned": False,
+                "profile_id": None,
+                "scraped_at": row.scraped_at,
+                "period_label": row.period_label,
+                "run_id": row.run_id,
+                "embedding": None,
+            }
+            for row in rows
+        ]
+        return items, total
+
     q = select(Post)
     parsed_date_from = _parse_iso_date(date_from)
     parsed_date_to = _parse_iso_date(date_to)

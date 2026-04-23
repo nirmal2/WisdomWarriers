@@ -132,14 +132,23 @@ function getInitialVisibleColumns() {
   }
 }
 
-export default function PostsPage() {
+interface PostsPageProps {
+  selectedSnapshotRunId?: number
+}
+
+export default function PostsPage({ selectedSnapshotRunId }: PostsPageProps) {
   const [filters, setFilters] = useState<PostQueryParams>({})
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(getInitialVisibleColumns)
 
   const offset = (page - 1) * pageSize
-  const { data, isLoading } = usePosts({ ...filters, limit: pageSize, offset })
+  const { data, isLoading } = usePosts({
+    ...filters,
+    snapshot_run_id: selectedSnapshotRunId,
+    limit: pageSize,
+    offset,
+  })
 
   const displayColumns = useMemo(
     () => ALL_COLUMNS.filter(col => visibleColumns.has(col.key)),
