@@ -31,6 +31,8 @@ def upgrade() -> None:
     # ============================================================
     op.execute(
         """
+        DROP VIEW IF EXISTS current_posts CASCADE;
+
         CREATE OR REPLACE VIEW current_posts AS
         SELECT
             ranked.post_id AS id,
