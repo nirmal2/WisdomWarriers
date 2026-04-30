@@ -167,6 +167,7 @@ async def trigger_scrape(
             frequency="on_demand",
             data_detail_level=req.data_detail_level,
             shared_scraped_at=None,
+            batch_mode=req.batch_mode,
             enable_embeddings=req.enable_embeddings,
             existing_run_id=run.id,
             finalize_run=True,

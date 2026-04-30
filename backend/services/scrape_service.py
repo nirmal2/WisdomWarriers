@@ -173,6 +173,7 @@ async def run_posts_scrape(
     data_detail_level: str = "basicData",
     shared_scraped_at: datetime | None = None,
     enable_embeddings: bool = True,
+    batch_mode: bool = False,
     existing_run_id: int | None = None,
     finalize_run: bool = True,
     apify_token: str | None = None,
@@ -219,24 +220,63 @@ async def run_posts_scrape(
                 requested_window = f"{date_from or 'any'} → {date_to or 'any'}"
                 await _append_run_log(db, run.id, f"Posts stage date filter applied: {requested_window}.")
                 await db.commit()
-            await _append_run_log(db, run.id, "Posts stage: waiting for Apify actor to return results...")
+            await _append_run_log(db, run.id, "Posts stage: waiting for Apify actor to return results..." if batch_mode else "Posts stage: fetching post batches from Apify...")
             await db.commit()
-            # Run the synchronous Apify call in a thread so the event loop stays free
-            result = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None,
-                    partial(run_posts_actor, usernames, results_limit, only_posts_newer_than, data_detail_level, apify_token),
-                ),
-                timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
-            )
-            # Handle both old (list) and new (tuple) return types for backwards compatibility
-            if isinstance(result, tuple):
-                raw_items, raw_logs = result
-            else:
-                raw_items = result
-                raw_logs = []
             
-            # Store raw logs in the run
+            # Scrape either all profiles' posts in one batch or one profile at a time.
+            all_raw_items = []
+            all_raw_logs = []
+            
+            if batch_mode:
+                result = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None,
+                        partial(run_posts_actor, usernames, results_limit, only_posts_newer_than, data_detail_level, apify_token),
+                    ),
+                    timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
+                )
+                # Handle both old (list) and new (tuple) return types for backwards compatibility
+                if isinstance(result, tuple):
+                    raw_items, raw_logs = result
+                else:
+                    raw_items = result
+                    raw_logs = []
+                all_raw_items.extend(raw_items)
+                all_raw_logs.extend(raw_logs)
+            else:
+                async def _fetch_posts_batch(username: str):
+                    return await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            None, partial(run_posts_actor, [username], results_limit, only_posts_newer_than, data_detail_level, apify_token)
+                        ),
+                        timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
+                    )
+
+                parallelism = max(1, int(get_settings().profile_scrape_parallelism))
+                semaphore = asyncio.Semaphore(parallelism)
+
+                async def _bounded_fetch(username: str):
+                    async with semaphore:
+                        return await _fetch_posts_batch(username)
+
+                tasks = [asyncio.create_task(_bounded_fetch(username)) for username in usernames]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for username, result in zip(usernames, results):
+                    if isinstance(result, Exception):
+                        logger.warning("Posts scrape failed for %s", username, exc_info=result)
+                        continue
+                    # Handle both old (list) and new (tuple) return types for backwards compatibility
+                    if isinstance(result, tuple):
+                        raw_items, raw_logs = result
+                    else:
+                        raw_items = result
+                        raw_logs = []
+                    all_raw_items.extend(raw_items)
+                    all_raw_logs.extend(raw_logs)
+            
+            raw_items = all_raw_items
+            raw_logs = all_raw_logs
             if raw_logs:
                 await _extend_run_logs(db, run.id, raw_logs)
                 await db.commit()
@@ -272,7 +312,7 @@ async def run_posts_scrape(
                 norm["scraped_at"] = scraped_at
                 norm["run_id"] = run.id
                 await post_repo.upsert_post(db, norm)
-                await post_repo.insert_snapshot(db, {
+                snap = await post_repo.insert_snapshot(db, {
                     "post_id": norm["id"],
                     "run_id": run.id,
                     "owner_username": norm.get("owner_username"),
@@ -290,10 +330,38 @@ async def run_posts_scrape(
                     "input_url": norm.get("input_url"),
                     "hashtags": norm.get("hashtags") or [],
                     "mentions": norm.get("mentions") or [],
+                    "tagged_users": norm.get("tagged_users") or [],
                     "coauthor_producers": norm.get("coauthor_producers") or [],
                     "period_label": period_label,
                     "scraped_at": scraped_at,
                 })
+                await post_repo.replace_snapshot_hashtags(
+                    db,
+                    snapshot_id=snap.id,
+                    post_id=norm["id"],
+                    run_id=run.id,
+                    period_label=period_label,
+                    owner_username=norm.get("owner_username"),
+                    hashtags=norm.get("hashtags") or [],
+                )
+                await post_repo.replace_snapshot_mentions(
+                    db,
+                    snapshot_id=snap.id,
+                    post_id=norm["id"],
+                    run_id=run.id,
+                    period_label=period_label,
+                    owner_username=norm.get("owner_username"),
+                    mentions=norm.get("mentions") or [],
+                )
+                await post_repo.replace_snapshot_tagged_users(
+                    db,
+                    snapshot_id=snap.id,
+                    post_id=norm["id"],
+                    run_id=run.id,
+                    period_label=period_label,
+                    owner_username=norm.get("owner_username"),
+                    tagged_users=norm.get("tagged_users") or [],
+                )
                 fetched += 1
                 await scrape_run_repo.update_run(db, run.id, {"items_fetched": fetched})
                 if fetched == 1 or fetched % 25 == 0:
@@ -625,6 +693,7 @@ async def run_combined_scrape(
         frequency=frequency,
         data_detail_level=data_detail_level,
         shared_scraped_at=shared_scraped_at,
+        batch_mode=batch_mode,
         enable_embeddings=enable_embeddings,
         existing_run_id=combined_run_id,
         finalize_run=True,
@@ -705,12 +774,40 @@ async def recover_posts_from_debug(run_id: int) -> dict:
                 "input_url": post_data.get("input_url"),
                 "hashtags": post_data.get("hashtags") or [],
                 "mentions": post_data.get("mentions") or [],
+                "tagged_users": post_data.get("tagged_users") or [],
                 "coauthor_producers": post_data.get("coauthor_producers") or [],
                 "period_label": period_label,
                 "scraped_at": scraped_at,
             }
             snap_data = {k: v for k, v in snap_data.items() if k in snapshot_columns}
-            await post_repo.insert_snapshot(db, snap_data)
+            snap = await post_repo.insert_snapshot(db, snap_data)
+            await post_repo.replace_snapshot_hashtags(
+                db,
+                snapshot_id=snap.id,
+                post_id=post_data["id"],
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=post_data.get("owner_username"),
+                hashtags=post_data.get("hashtags") or [],
+            )
+            await post_repo.replace_snapshot_mentions(
+                db,
+                snapshot_id=snap.id,
+                post_id=post_data["id"],
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=post_data.get("owner_username"),
+                mentions=post_data.get("mentions") or [],
+            )
+            await post_repo.replace_snapshot_tagged_users(
+                db,
+                snapshot_id=snap.id,
+                post_id=post_data["id"],
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=post_data.get("owner_username"),
+                tagged_users=post_data.get("tagged_users") or [],
+            )
             imported += 1
 
         await scrape_run_repo.update_run(db, run_id, {

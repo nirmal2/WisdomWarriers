@@ -21,6 +21,7 @@ export interface WisdomWarriorMonthlyView {
   total_views: number
   matched_hashtags: string[]
   matched_mentions: string[]
+  matched_tagged_users: string[]
 }
 
 export interface WisdomWarriorMonthlyViewsQuery {
@@ -30,6 +31,7 @@ export interface WisdomWarriorMonthlyViewsQuery {
   category?: string
   hashtags?: string[]
   mentions?: string[]
+  taggedUsers?: string[]
   keywords?: string[]
 }
 
@@ -77,6 +79,7 @@ export const fetchWisdomWarriorsMonthlyViews = (query: WisdomWarriorMonthlyViews
   if (query.category) qs.set("category", query.category)
   for (const value of query.hashtags ?? []) qs.append("hashtags", value)
   for (const value of query.mentions ?? []) qs.append("mentions", value)
+  for (const value of query.taggedUsers ?? []) qs.append("tagged_users", value)
   for (const value of query.keywords ?? []) qs.append("keywords", value)
   return fetch(`${ANALYTICS_BASE}?${qs.toString()}`).then(r => handleResponse<WisdomWarriorMonthlyView[]>(r))
 }

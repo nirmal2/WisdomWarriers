@@ -1,9 +1,15 @@
 from datetime import date
 from typing import Optional, Sequence
-from sqlalchemy import Date, Text, cast, func, or_, select
+from sqlalchemy import Date, Text, and_, cast, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.post import Post
+from backend.models.post_hashtag import PostHashtag
+from backend.models.post_mention import PostMention
+from backend.models.post_tagged_user import PostTaggedUser
 from backend.models.post_snapshot import PostSnapshot
+from backend.models.post_snapshot_hashtag import PostSnapshotHashtag
+from backend.models.post_snapshot_mention import PostSnapshotMention
+from backend.models.post_snapshot_tagged_user import PostSnapshotTaggedUser
 from backend.models.profile import Profile
 
 
@@ -43,6 +49,35 @@ async def upsert_post(db: AsyncSession, data: dict) -> Post:
         for k, v in data.items():
             setattr(post, k, v)
     await db.flush()
+
+    if "hashtags" in data:
+        await replace_post_hashtags(
+            db,
+            post_id=post.id,
+            run_id=post.run_id,
+            period_label=post.period_label,
+            owner_username=post.owner_username,
+            hashtags=post.hashtags or [],
+        )
+    if "mentions" in data:
+        await replace_post_mentions(
+            db,
+            post_id=post.id,
+            run_id=post.run_id,
+            period_label=post.period_label,
+            owner_username=post.owner_username,
+            mentions=post.mentions or [],
+        )
+    if "tagged_users" in data:
+        await replace_post_tagged_users(
+            db,
+            post_id=post.id,
+            run_id=post.run_id,
+            period_label=post.period_label,
+            owner_username=post.owner_username,
+            tagged_users=post.tagged_users or [],
+        )
+
     return post
 
 
@@ -64,6 +99,283 @@ async def insert_snapshot(db: AsyncSession, data: dict) -> PostSnapshot:
     db.add(snap)
     await db.flush()
     return snap
+
+
+async def replace_post_hashtags(
+    db: AsyncSession,
+    *,
+    post_id: str,
+    run_id: int | None,
+    period_label: str,
+    owner_username: str | None,
+    hashtags: Sequence[str] | None,
+) -> None:
+    await db.execute(delete(PostHashtag).where(PostHashtag.post_id == post_id))
+
+    if not hashtags:
+        return
+
+    seen: set[str] = set()
+    rows: list[PostHashtag] = []
+    for value in hashtags:
+        if not isinstance(value, str):
+            continue
+        raw = value.strip()
+        if not raw:
+            continue
+        norm = _normalize_hashtag(raw)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        rows.append(
+            PostHashtag(
+                post_id=post_id,
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=owner_username,
+                hashtag_raw=raw,
+                hashtag_norm=norm,
+            )
+        )
+
+    if rows:
+        db.add_all(rows)
+
+
+async def replace_post_mentions(
+    db: AsyncSession,
+    *,
+    post_id: str,
+    run_id: int | None,
+    period_label: str,
+    owner_username: str | None,
+    mentions: Sequence[str] | None,
+) -> None:
+    await db.execute(delete(PostMention).where(PostMention.post_id == post_id))
+
+    if not mentions:
+        return
+
+    seen: set[str] = set()
+    rows: list[PostMention] = []
+    for value in mentions:
+        if not isinstance(value, str):
+            continue
+        raw = value.strip()
+        if not raw:
+            continue
+        norm = _normalize_username(raw)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        rows.append(
+            PostMention(
+                post_id=post_id,
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=owner_username,
+                mention_raw=raw,
+                mention_norm=norm,
+            )
+        )
+
+    if rows:
+        db.add_all(rows)
+
+
+async def replace_post_tagged_users(
+    db: AsyncSession,
+    *,
+    post_id: str,
+    run_id: int | None,
+    period_label: str,
+    owner_username: str | None,
+    tagged_users: Sequence[object] | None,
+) -> None:
+    await db.execute(delete(PostTaggedUser).where(PostTaggedUser.post_id == post_id))
+
+    if not tagged_users:
+        return
+
+    seen: set[str] = set()
+    rows: list[PostTaggedUser] = []
+    for value in tagged_users:
+        norm = _extract_username(value)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        raw = str(value).strip() if isinstance(value, str) else norm
+        rows.append(
+            PostTaggedUser(
+                post_id=post_id,
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=owner_username,
+                tagged_user_raw=raw,
+                tagged_user_norm=norm,
+            )
+        )
+
+    if rows:
+        db.add_all(rows)
+
+
+def _normalize_hashtag(value: str) -> str:
+    return value.strip().lstrip("#").casefold()
+
+
+def _normalize_username(value: str) -> str:
+    return value.strip().lstrip("@").casefold()
+
+
+def _extract_username(value: object) -> str | None:
+    if isinstance(value, str):
+        candidate = value
+    elif isinstance(value, dict):
+        candidate = None
+        for key in ("username", "userName", "ownerUsername", "handle"):
+            raw_value = value.get(key)
+            if isinstance(raw_value, str) and raw_value.strip():
+                candidate = raw_value
+                break
+    else:
+        candidate = None
+
+    if not candidate:
+        return None
+    normalized = _normalize_username(candidate)
+    return normalized or None
+
+
+async def replace_snapshot_hashtags(
+    db: AsyncSession,
+    *,
+    snapshot_id: int,
+    post_id: str,
+    run_id: int | None,
+    period_label: str,
+    owner_username: str | None,
+    hashtags: Sequence[str] | None,
+) -> None:
+    await db.execute(
+        delete(PostSnapshotHashtag).where(PostSnapshotHashtag.snapshot_id == snapshot_id)
+    )
+
+    if not hashtags:
+        return
+
+    seen: set[str] = set()
+    rows: list[PostSnapshotHashtag] = []
+    for value in hashtags:
+        if not isinstance(value, str):
+            continue
+        raw = value.strip()
+        if not raw:
+            continue
+        norm = _normalize_hashtag(raw)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        rows.append(
+            PostSnapshotHashtag(
+                snapshot_id=snapshot_id,
+                post_id=post_id,
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=owner_username,
+                hashtag_raw=raw,
+                hashtag_norm=norm,
+            )
+        )
+
+    if rows:
+        db.add_all(rows)
+
+
+async def replace_snapshot_mentions(
+    db: AsyncSession,
+    *,
+    snapshot_id: int,
+    post_id: str,
+    run_id: int | None,
+    period_label: str,
+    owner_username: str | None,
+    mentions: Sequence[str] | None,
+) -> None:
+    await db.execute(
+        delete(PostSnapshotMention).where(PostSnapshotMention.snapshot_id == snapshot_id)
+    )
+
+    if not mentions:
+        return
+
+    seen: set[str] = set()
+    rows: list[PostSnapshotMention] = []
+    for value in mentions:
+        if not isinstance(value, str):
+            continue
+        raw = value.strip()
+        if not raw:
+            continue
+        norm = _normalize_username(raw)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        rows.append(
+            PostSnapshotMention(
+                snapshot_id=snapshot_id,
+                post_id=post_id,
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=owner_username,
+                mention_raw=raw,
+                mention_norm=norm,
+            )
+        )
+
+    if rows:
+        db.add_all(rows)
+
+
+async def replace_snapshot_tagged_users(
+    db: AsyncSession,
+    *,
+    snapshot_id: int,
+    post_id: str,
+    run_id: int | None,
+    period_label: str,
+    owner_username: str | None,
+    tagged_users: Sequence[object] | None,
+) -> None:
+    await db.execute(
+        delete(PostSnapshotTaggedUser).where(PostSnapshotTaggedUser.snapshot_id == snapshot_id)
+    )
+
+    if not tagged_users:
+        return
+
+    seen: set[str] = set()
+    rows: list[PostSnapshotTaggedUser] = []
+    for value in tagged_users:
+        norm = _extract_username(value)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        raw = str(value).strip() if isinstance(value, str) else norm
+        rows.append(
+            PostSnapshotTaggedUser(
+                snapshot_id=snapshot_id,
+                post_id=post_id,
+                run_id=run_id,
+                period_label=period_label,
+                owner_username=owner_username,
+                tagged_user_raw=raw,
+                tagged_user_norm=norm,
+            )
+        )
+
+    if rows:
+        db.add_all(rows)
 
 
 def _clean_filter_values(values: Sequence[str] | None) -> list[str]:
@@ -91,6 +403,7 @@ async def list_posts(
     hashtag: Optional[str] = None,
     hashtags: Sequence[str] | None = None,
     mentions: Sequence[str] | None = None,
+    tagged_users: Sequence[str] | None = None,
     keywords: Sequence[str] | None = None,
     tagged_group: Optional[str] = None,
     period_label: Optional[str] = None,
@@ -117,15 +430,61 @@ async def list_posts(
 
         hashtag_terms = _clean_filter_values([*(hashtags or []), hashtag] if hashtag else hashtags)
         mention_terms = _clean_filter_values(mentions)
+        tagged_user_terms = _clean_filter_values(tagged_users)
         keyword_terms = _clean_filter_values(keywords)
 
         content_filters = []
         if hashtag_terms:
-            hashtag_text = func.lower(func.coalesce(cast(PostSnapshot.hashtags, Text), ""))
-            content_filters.extend(hashtag_text.like(f"%{term.lower()}%") for term in hashtag_terms)
+            normalized_terms = [
+                _normalize_hashtag(term)
+                for term in hashtag_terms
+                if _normalize_hashtag(term)
+            ]
+            if normalized_terms:
+                content_filters.append(
+                    exists(
+                        select(1).where(
+                            and_(
+                                PostSnapshotHashtag.snapshot_id == PostSnapshot.id,
+                                PostSnapshotHashtag.hashtag_norm.in_(normalized_terms),
+                            )
+                        )
+                    )
+                )
         if mention_terms:
-            coauthor_text = func.lower(func.coalesce(cast(PostSnapshot.coauthor_producers, Text), ""))
-            content_filters.extend(coauthor_text.like(f"%{term.lower()}%") for term in mention_terms)
+            normalized_mention_terms = [
+                _normalize_username(term)
+                for term in mention_terms
+                if _normalize_username(term)
+            ]
+            if normalized_mention_terms:
+                content_filters.append(
+                    exists(
+                        select(1).where(
+                            and_(
+                                PostSnapshotMention.snapshot_id == PostSnapshot.id,
+                                PostSnapshotMention.mention_norm.in_(normalized_mention_terms),
+                            )
+                        )
+                    )
+                )
+        if tagged_user_terms:
+            normalized_tagged_user_terms = [
+                _normalize_username(term)
+                for term in tagged_user_terms
+                if _normalize_username(term)
+            ]
+            if normalized_tagged_user_terms:
+                content_filters.append(
+                    exists(
+                        select(1).where(
+                            and_(
+                                PostSnapshotTaggedUser.snapshot_id == PostSnapshot.id,
+                                PostSnapshotTaggedUser.tagged_user_norm.in_(normalized_tagged_user_terms),
+                            )
+                        )
+                    )
+                )
         if keyword_terms:
             caption_text = func.lower(func.coalesce(PostSnapshot.caption, ""))
             content_filters.extend(caption_text.like(f"%{term.lower()}%") for term in keyword_terms)
@@ -135,13 +494,30 @@ async def list_posts(
         if tagged_group:
             terms = TAGGED_GROUP_TERMS.get(tagged_group.lower(), [])
             if terms:
+                normalized_group_terms = [
+                    _normalize_hashtag(term)
+                    for term in terms
+                    if _normalize_hashtag(term)
+                ]
+                hashtag_exists = (
+                    exists(
+                        select(1).where(
+                            and_(
+                                PostSnapshotHashtag.snapshot_id == PostSnapshot.id,
+                                PostSnapshotHashtag.hashtag_norm.in_(normalized_group_terms),
+                            )
+                        )
+                    )
+                    if normalized_group_terms
+                    else False
+                )
                 q = q.where(
                     or_(
                         *[
                             or_(
                                 func.lower(func.coalesce(PostSnapshot.caption, "")).like(f"%{term}%"),
                                 func.lower(func.coalesce(PostSnapshot.owner_username, "")).like(f"%{term}%"),
-                                func.lower(func.coalesce(cast(PostSnapshot.hashtags, Text), "")).like(f"%{term}%"),
+                                hashtag_exists,
                                 func.lower(func.coalesce(cast(PostSnapshot.coauthor_producers, Text), "")).like(f"%{term}%"),
                             )
                             for term in terms
@@ -197,7 +573,7 @@ async def list_posts(
                 "music_info": {},
                 "hashtags": row.hashtags or [],
                 "mentions": [],
-                "tagged_users": [],
+                "tagged_users": row.tagged_users or [],
                 "coauthor_producers": row.coauthor_producers or [],
                 "is_pinned": False,
                 "profile_id": None,
@@ -227,15 +603,49 @@ async def list_posts(
 
     hashtag_terms = _clean_filter_values([*(hashtags or []), hashtag] if hashtag else hashtags)
     mention_terms = _clean_filter_values(mentions)
+    tagged_user_terms = _clean_filter_values(tagged_users)
     keyword_terms = _clean_filter_values(keywords)
 
     content_filters = []
     if hashtag_terms:
-        hashtag_text = func.lower(func.coalesce(cast(Post.hashtags, Text), ""))
-        content_filters.extend(hashtag_text.like(f"%{term.lower()}%") for term in hashtag_terms)
+        normalized_terms = [_normalize_hashtag(term) for term in hashtag_terms if _normalize_hashtag(term)]
+        if normalized_terms:
+            content_filters.append(
+                exists(
+                    select(1).where(
+                        and_(
+                            PostHashtag.post_id == Post.id,
+                            PostHashtag.hashtag_norm.in_(normalized_terms),
+                        )
+                    )
+                )
+            )
     if mention_terms:
-        mention_text = func.lower(func.coalesce(cast(Post.mentions, Text), ""))
-        content_filters.extend(mention_text.like(f"%{term.lower()}%") for term in mention_terms)
+        normalized_mention_terms = [_normalize_username(term) for term in mention_terms if _normalize_username(term)]
+        if normalized_mention_terms:
+            content_filters.append(
+                exists(
+                    select(1).where(
+                        and_(
+                            PostMention.post_id == Post.id,
+                            PostMention.mention_norm.in_(normalized_mention_terms),
+                        )
+                    )
+                )
+            )
+    if tagged_user_terms:
+        normalized_tagged_user_terms = [_normalize_username(term) for term in tagged_user_terms if _normalize_username(term)]
+        if normalized_tagged_user_terms:
+            content_filters.append(
+                exists(
+                    select(1).where(
+                        and_(
+                            PostTaggedUser.post_id == Post.id,
+                            PostTaggedUser.tagged_user_norm.in_(normalized_tagged_user_terms),
+                        )
+                    )
+                )
+            )
     if keyword_terms:
         caption_text = func.lower(func.coalesce(Post.caption, ""))
         content_filters.extend(caption_text.like(f"%{term.lower()}%") for term in keyword_terms)
@@ -245,13 +655,26 @@ async def list_posts(
     if tagged_group:
         terms = TAGGED_GROUP_TERMS.get(tagged_group.lower(), [])
         if terms:
+            normalized_group_terms = [_normalize_hashtag(term) for term in terms if _normalize_hashtag(term)]
+            hashtag_exists = (
+                exists(
+                    select(1).where(
+                        and_(
+                            PostHashtag.post_id == Post.id,
+                            PostHashtag.hashtag_norm.in_(normalized_group_terms),
+                        )
+                    )
+                )
+                if normalized_group_terms
+                else False
+            )
             q = q.where(
                 or_(
                     *[
                         or_(
                             func.lower(func.coalesce(Post.caption, "")).like(f"%{term}%"),
                             func.lower(func.coalesce(Post.owner_username, "")).like(f"%{term}%"),
-                            func.lower(func.coalesce(cast(Post.hashtags, Text), "")).like(f"%{term}%"),
+                            hashtag_exists,
                             func.lower(func.coalesce(cast(Post.coauthor_producers, Text), "")).like(f"%{term}%"),
                         )
                         for term in terms

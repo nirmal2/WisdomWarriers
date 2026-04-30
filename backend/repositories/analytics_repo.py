@@ -19,6 +19,19 @@ WISDOM_WARRIOR_ALLOWED_MENTIONS = [
     "sadhguru_kannada_official",
 ]
 
+WISDOM_WARRIOR_ALLOWED_TAGGED_USERS = [
+    "ishafoundation",
+    "adiyogi.official",
+    "sadhguru",
+    "sadhgurutamil",
+    "sadhgurutelugu",
+    "sadhguru.hindiofficial",
+    "sadhguru.malayalam",
+    "sadhguru_marathi_official",
+    "sadhgurubangla",
+    "sadhguru_kannada_official",
+]
+
 WISDOM_WARRIOR_ALLOWED_HASHTAGS = [
     "Isha",
     "Ishafoundation",
@@ -389,6 +402,7 @@ async def get_wisdom_warriors_monthly_views(db: AsyncSession, month: str) -> lis
         apply_filters=True,
         hashtags=WISDOM_WARRIOR_ALLOWED_HASHTAGS,
         mentions=WISDOM_WARRIOR_ALLOWED_MENTIONS,
+        tagged_users=WISDOM_WARRIOR_ALLOWED_TAGGED_USERS,
         caption_keywords=WISDOM_WARRIOR_ALLOWED_CAPTION_KEYWORDS,
         category=None,
     )
@@ -419,6 +433,7 @@ async def get_wisdom_warriors_monthly_views_filtered(
     apply_filters: bool,
     hashtags: list[str] | None,
     mentions: list[str] | None,
+    tagged_users: list[str] | None,
     caption_keywords: list[str] | None,
     category: str | None,
     snapshot_run_id: int | None = None,
@@ -466,6 +481,7 @@ async def get_wisdom_warriors_monthly_views_filtered(
                 "total_views": 0.0,
                 "matched_hashtags": [],
                 "matched_mentions": [],
+                "matched_tagged_users": [],
             }
             for profile in profiles
         ]
@@ -481,9 +497,11 @@ async def get_wisdom_warriors_monthly_views_filtered(
 
     active_hashtags = hashtags if hashtags else WISDOM_WARRIOR_ALLOWED_HASHTAGS
     active_mentions = mentions if mentions else WISDOM_WARRIOR_ALLOWED_MENTIONS
+    active_tagged_users = tagged_users if tagged_users else WISDOM_WARRIOR_ALLOWED_TAGGED_USERS
     active_caption_keywords = caption_keywords if caption_keywords else WISDOM_WARRIOR_ALLOWED_CAPTION_KEYWORDS
     hashtag_map = {_normalize_hashtag(value): value for value in active_hashtags}
     mention_map = {_normalize_mention(value): value for value in active_mentions}
+    tagged_user_map = {_normalize_mention(value): value for value in active_tagged_users}
     keyword_matches = [value.casefold() for value in active_caption_keywords]
 
     summary_by_username: dict[str, dict] = {
@@ -493,6 +511,7 @@ async def get_wisdom_warriors_monthly_views_filtered(
             "total_views": 0.0,
             "matched_hashtags": [],
             "matched_mentions": [],
+            "matched_tagged_users": [],
         }
         for profile in profiles
     }
@@ -516,32 +535,41 @@ async def get_wisdom_warriors_monthly_views_filtered(
         if not credited_usernames:
             continue
 
-        hashtags = post.hashtags or []
-        mentions = post.mentions or []
+        post_hashtags = post.hashtags or []
+        post_mentions = post.mentions or []
+        post_tagged_users = _extract_coauthor_usernames(post.tagged_users)
         caption_text = (post.caption or "").casefold()
 
         matched_hashtags = []
         matched_mentions = []
+        matched_tagged_users = []
         caption_match = False
 
         if apply_filters:
             matched_hashtags = sorted(
                 {
                     hashtag_map[normalized]
-                    for normalized in (_normalize_hashtag(value) for value in hashtags)
+                    for normalized in (_normalize_hashtag(value) for value in post_hashtags)
                     if normalized in hashtag_map
                 }
             )
             matched_mentions = sorted(
                 {
                     mention_map[normalized]
-                    for normalized in (_normalize_mention(value) for value in mentions)
+                    for normalized in (_normalize_mention(value) for value in post_mentions)
                     if normalized in mention_map
+                }
+            )
+            matched_tagged_users = sorted(
+                {
+                    tagged_user_map[normalized]
+                    for normalized in post_tagged_users
+                    if normalized in tagged_user_map
                 }
             )
             caption_match = any(keyword in caption_text for keyword in keyword_matches)
 
-            if not matched_hashtags and not matched_mentions and not caption_match:
+            if not matched_hashtags and not matched_mentions and not matched_tagged_users and not caption_match:
                 continue
 
         shared_views = float(post.video_play_count or 0) / max(1, len(participant_usernames))
@@ -553,5 +581,8 @@ async def get_wisdom_warriors_monthly_views_filtered(
             if apply_filters:
                 summary["matched_hashtags"] = sorted(set(summary["matched_hashtags"]) | set(matched_hashtags))
                 summary["matched_mentions"] = sorted(set(summary["matched_mentions"]) | set(matched_mentions))
+                summary["matched_tagged_users"] = sorted(
+                    set(summary["matched_tagged_users"]) | set(matched_tagged_users)
+                )
 
     return [summary_by_username[_normalize_mention(profile.username)] for profile in profiles]

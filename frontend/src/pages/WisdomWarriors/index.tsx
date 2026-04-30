@@ -28,6 +28,19 @@ const FILTER_MENTIONS = [
   "sadhguru_kannada_official",
 ]
 
+const FILTER_TAGGED_USERS = [
+  "ishafoundation",
+  "adiyogi.official",
+  "sadhguru",
+  "sadhgurutamil",
+  "sadhgurutelugu",
+  "sadhguru.hindiofficial",
+  "sadhguru.malayalam",
+  "sadhguru_marathi_official",
+  "sadhgurubangla",
+  "sadhguru_kannada_official",
+]
+
 const FILTER_HASHTAGS = [
   "Isha",
   "Ishafoundation",
@@ -65,14 +78,14 @@ const FILTER_CAPTION_KEYWORDS = [
 
 const WISDOM_WARRIORS_FILTERS_STORAGE_KEY = "insta-analytics.wisdom-warriors.in-house-filters"
 
-function getStoredWisdomFilterList(key: "hashtags" | "mentions" | "keywords", fallback: string[]) {
+function getStoredWisdomFilterList(key: "hashtags" | "mentions" | "taggedUsers" | "keywords", fallback: string[]) {
   if (typeof window === "undefined") return fallback
 
   try {
     const raw = window.localStorage.getItem(WISDOM_WARRIORS_FILTERS_STORAGE_KEY)
     if (!raw) return fallback
 
-    const parsed = JSON.parse(raw) as Partial<Record<"hashtags" | "mentions" | "keywords", string[]>>
+    const parsed = JSON.parse(raw) as Partial<Record<"hashtags" | "mentions" | "taggedUsers" | "keywords", string[]>>
     const values = parsed[key]
     if (!Array.isArray(values)) return fallback
 
@@ -141,12 +154,15 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const [draftHashtags, setDraftHashtags] = useState<string[]>(() => getStoredWisdomFilterList("hashtags", FILTER_HASHTAGS))
   const [draftMentions, setDraftMentions] = useState<string[]>(() => getStoredWisdomFilterList("mentions", FILTER_MENTIONS))
+  const [draftTaggedUsers, setDraftTaggedUsers] = useState<string[]>(() => getStoredWisdomFilterList("taggedUsers", FILTER_TAGGED_USERS))
   const [draftKeywords, setDraftKeywords] = useState<string[]>(() => getStoredWisdomFilterList("keywords", FILTER_CAPTION_KEYWORDS))
   const [appliedHashtags, setAppliedHashtags] = useState<string[]>(() => getStoredWisdomFilterList("hashtags", FILTER_HASHTAGS))
   const [appliedMentions, setAppliedMentions] = useState<string[]>(() => getStoredWisdomFilterList("mentions", FILTER_MENTIONS))
+  const [appliedTaggedUsers, setAppliedTaggedUsers] = useState<string[]>(() => getStoredWisdomFilterList("taggedUsers", FILTER_TAGGED_USERS))
   const [appliedKeywords, setAppliedKeywords] = useState<string[]>(() => getStoredWisdomFilterList("keywords", FILTER_CAPTION_KEYWORDS))
   const [newHashtag, setNewHashtag] = useState("")
   const [newMention, setNewMention] = useState("")
+  const [newTaggedUser, setNewTaggedUser] = useState("")
   const [newKeyword, setNewKeyword] = useState("")
   const [showModal, setShowModal] = useState(false)
   const [showBulkModal, setShowBulkModal] = useState(false)
@@ -169,6 +185,7 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
     category: "In-house influencer",
     hashtags: appliedHashtags,
     mentions: appliedMentions,
+    taggedUsers: appliedTaggedUsers,
     keywords: appliedKeywords,
   })
   const dedicatedMonthlyViews = dedicatedMonthlyViewsQuery.data ?? []
@@ -218,10 +235,11 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
       JSON.stringify({
         hashtags: draftHashtags,
         mentions: draftMentions,
+        taggedUsers: draftTaggedUsers,
         keywords: draftKeywords,
       })
     )
-  }, [draftHashtags, draftMentions, draftKeywords])
+  }, [draftHashtags, draftMentions, draftTaggedUsers, draftKeywords])
 
   function handleCreate(data: WisdomWarriorCreate) {
     // Force the category to match the active tab when adding from that tab
@@ -271,15 +289,18 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
   function applyFilters() {
     setAppliedHashtags(draftHashtags)
     setAppliedMentions(draftMentions)
+    setAppliedTaggedUsers(draftTaggedUsers)
     setAppliedKeywords(draftKeywords)
   }
 
   function resetFilters() {
     setDraftHashtags(FILTER_HASHTAGS)
     setDraftMentions(FILTER_MENTIONS)
+    setDraftTaggedUsers(FILTER_TAGGED_USERS)
     setDraftKeywords(FILTER_CAPTION_KEYWORDS)
     setAppliedHashtags(FILTER_HASHTAGS)
     setAppliedMentions(FILTER_MENTIONS)
+    setAppliedTaggedUsers(FILTER_TAGGED_USERS)
     setAppliedKeywords(FILTER_CAPTION_KEYWORDS)
   }
 
@@ -409,10 +430,10 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
           <div>
             <h2 className="text-sm font-semibold text-gray-200">View Count Filters</h2>
             <p className="text-xs text-gray-400 mt-1">
-              In-house monthly views only include posts from {selectedMonth} that match at least one allowed hashtag, mention, or caption keyword.
+              In-house monthly views only include posts from {selectedMonth} that match at least one allowed hashtag, mention, tagged user, or caption keyword.
             </p>
           </div>
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid gap-3 lg:grid-cols-4">
             <div>
               <p className="text-xs font-medium text-gray-400 mb-2">Allowed Hashtags</p>
               <div className="flex gap-2 mb-2">
@@ -515,6 +536,40 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
                 ))}
               </div>
             </div>
+            <div>
+              <p className="text-xs font-medium text-gray-400 mb-2">Allowed Tagged Users</p>
+              <div className="flex gap-2 mb-2">
+                <input
+                  value={newTaggedUser}
+                  onChange={e => setNewTaggedUser(e.target.value)}
+                  placeholder="Add tagged user"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    addFilterValue(newTaggedUser, setDraftTaggedUsers)
+                    setNewTaggedUser("")
+                  }}
+                  className="rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-200 hover:bg-gray-800"
+                >
+                  Add
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {draftTaggedUsers.map(value => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => removeFilterValue(value, setDraftTaggedUsers)}
+                    className="inline-flex items-center rounded-full border border-gray-700 bg-gray-900 px-2 py-0.5 text-[11px] text-gray-300 hover:border-red-700 hover:text-red-300"
+                    title="Remove"
+                  >
+                    {value} ×
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="flex items-center justify-end gap-2">
             <button
@@ -550,7 +605,7 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
                     <Info className="w-3.5 h-3.5 text-gray-500 cursor-help" />
                     <div className="absolute left-1/2 -translate-x-1/2 top-5 z-10 hidden group-hover:block w-72 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-xs text-gray-300 shadow-lg normal-case tracking-normal font-normal">
                       {isInHouse
-                        ? "Views are collaborator-adjusted: each post's views are divided by the total number of creators (owner + collaborators). Only posts matching the applied hashtag, mention, or caption keyword filters are counted."
+                        ? "Views are collaborator-adjusted: each post's views are divided by the total number of creators (owner + collaborators). Only posts matching the applied hashtag, mention, tagged-user, or caption keyword filters are counted."
                         : "Views are collaborator-adjusted: each post's views are divided by the total number of creators (owner + collaborators)."}
                     </div>
                   </div>
@@ -558,20 +613,21 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
               </th>
               <th className="px-4 py-3 text-left font-medium">Hashtags</th>
               <th className="px-4 py-3 text-left font-medium">Mentions</th>
+              <th className="px-4 py-3 text-left font-medium">Tagged Users</th>
               <th className="px-4 py-3 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
             {isLoading && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500 text-sm">
+                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 text-sm">
                   Loading…
                 </td>
               </tr>
             )}
             {!isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500 text-sm">
+                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 text-sm">
                   No {activeTab} influencers yet. Click <span className="text-purple-400">Add Influencer</span> to get started.
                 </td>
               </tr>
@@ -621,6 +677,9 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
                 </td>
                 <td className="px-4 py-3 align-top">
                   <MatchList values={monthlyViewsByUsername.get(warrior.username.toLowerCase())?.matched_mentions} />
+                </td>
+                <td className="px-4 py-3 align-top">
+                  <MatchList values={monthlyViewsByUsername.get(warrior.username.toLowerCase())?.matched_tagged_users} />
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-2">

@@ -306,13 +306,6 @@ export function PostFilters({ onFilter }: FiltersProps) {
       <div className="flex items-center justify-end gap-2">
         <button
           type="button"
-          onClick={reset}
-          className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
-        >
-          Reset
-        </button>
-        <button
-          type="button"
           onClick={apply}
           className="rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-600"
         >

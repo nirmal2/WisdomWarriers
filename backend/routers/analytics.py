@@ -121,6 +121,7 @@ async def wisdom_warriors_monthly_views(
     snapshot_run_id: int | None = None,
     hashtags: list[str] | None = Query(default=None),
     mentions: list[str] | None = Query(default=None),
+    tagged_users: list[str] | None = Query(default=None),
     keywords: list[str] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list:
@@ -132,6 +133,7 @@ async def wisdom_warriors_monthly_views(
         apply_filters=apply_filters,
         hashtags=hashtags,
         mentions=mentions,
+        tagged_users=tagged_users,
         caption_keywords=keywords,
         category=category,
         snapshot_run_id=snapshot_run_id,

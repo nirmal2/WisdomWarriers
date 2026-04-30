@@ -232,6 +232,7 @@ create table if not exists post_snapshots (
     input_url            text,
     hashtags             jsonb default '[]',
     mentions             jsonb default '[]',
+    tagged_users         jsonb default '[]',
     coauthor_producers   jsonb default '[]',
     period_label         text not null,
     scraped_at           timestamptz default now()
@@ -242,3 +243,135 @@ create index if not exists post_snapshots_run_id_idx on post_snapshots (run_id);
 create index if not exists post_snapshots_owner_username_idx on post_snapshots (owner_username);
 create index if not exists post_snapshots_url_idx on post_snapshots (url);
 create index if not exists post_snapshots_period_label_idx on post_snapshots (period_label);
+
+-- ============================================================
+-- 10. post_snapshot_hashtags (normalized hashtags per snapshot)
+-- ============================================================
+create table if not exists post_snapshot_hashtags (
+    id             serial primary key,
+    snapshot_id    integer not null references post_snapshots (id) on delete cascade,
+    post_id        text not null,
+    run_id         integer references scrape_runs (id),
+    period_label   text not null,
+    owner_username text,
+    hashtag_raw    text not null,
+    hashtag_norm   text not null,
+    created_at     timestamptz default now(),
+    constraint uq_post_snapshot_hashtag unique (snapshot_id, hashtag_norm)
+);
+
+create index if not exists post_snapshot_hashtags_snapshot_id_idx on post_snapshot_hashtags (snapshot_id);
+create index if not exists post_snapshot_hashtags_post_id_idx on post_snapshot_hashtags (post_id);
+create index if not exists post_snapshot_hashtags_run_id_idx on post_snapshot_hashtags (run_id);
+create index if not exists post_snapshot_hashtags_period_label_idx on post_snapshot_hashtags (period_label);
+create index if not exists post_snapshot_hashtags_owner_username_idx on post_snapshot_hashtags (owner_username);
+create index if not exists post_snapshot_hashtags_hashtag_norm_idx on post_snapshot_hashtags (hashtag_norm);
+
+-- ============================================================
+-- 11. post_snapshot_mentions (normalized mentions per snapshot)
+-- ============================================================
+create table if not exists post_snapshot_mentions (
+    id             serial primary key,
+    snapshot_id    integer not null references post_snapshots (id) on delete cascade,
+    post_id        text not null,
+    run_id         integer references scrape_runs (id),
+    period_label   text not null,
+    owner_username text,
+    mention_raw    text not null,
+    mention_norm   text not null,
+    created_at     timestamptz default now(),
+    constraint uq_post_snapshot_mention unique (snapshot_id, mention_norm)
+);
+
+create index if not exists post_snapshot_mentions_snapshot_id_idx on post_snapshot_mentions (snapshot_id);
+create index if not exists post_snapshot_mentions_post_id_idx on post_snapshot_mentions (post_id);
+create index if not exists post_snapshot_mentions_run_id_idx on post_snapshot_mentions (run_id);
+create index if not exists post_snapshot_mentions_period_label_idx on post_snapshot_mentions (period_label);
+create index if not exists post_snapshot_mentions_owner_username_idx on post_snapshot_mentions (owner_username);
+create index if not exists post_snapshot_mentions_mention_norm_idx on post_snapshot_mentions (mention_norm);
+
+-- ============================================================
+-- 12. post_snapshot_tagged_users (normalized tagged users)
+-- ============================================================
+create table if not exists post_snapshot_tagged_users (
+    id               serial primary key,
+    snapshot_id      integer not null references post_snapshots (id) on delete cascade,
+    post_id          text not null,
+    run_id           integer references scrape_runs (id),
+    period_label     text not null,
+    owner_username   text,
+    tagged_user_raw  text not null,
+    tagged_user_norm text not null,
+    created_at       timestamptz default now(),
+    constraint uq_post_snapshot_tagged_user unique (snapshot_id, tagged_user_norm)
+);
+
+create index if not exists post_snapshot_tagged_users_snapshot_id_idx on post_snapshot_tagged_users (snapshot_id);
+create index if not exists post_snapshot_tagged_users_post_id_idx on post_snapshot_tagged_users (post_id);
+create index if not exists post_snapshot_tagged_users_run_id_idx on post_snapshot_tagged_users (run_id);
+create index if not exists post_snapshot_tagged_users_period_label_idx on post_snapshot_tagged_users (period_label);
+create index if not exists post_snapshot_tagged_users_owner_username_idx on post_snapshot_tagged_users (owner_username);
+create index if not exists post_snapshot_tagged_users_tagged_user_norm_idx on post_snapshot_tagged_users (tagged_user_norm);
+
+-- ============================================================
+-- 13. post_hashtags (normalized hashtags per current post)
+-- ============================================================
+create table if not exists post_hashtags (
+    id             serial primary key,
+    post_id        text not null references posts (id) on delete cascade,
+    run_id         integer references scrape_runs (id),
+    period_label   text not null,
+    owner_username text,
+    hashtag_raw    text not null,
+    hashtag_norm   text not null,
+    created_at     timestamptz default now(),
+    constraint uq_post_hashtag unique (post_id, hashtag_norm)
+);
+
+create index if not exists post_hashtags_post_id_idx on post_hashtags (post_id);
+create index if not exists post_hashtags_run_id_idx on post_hashtags (run_id);
+create index if not exists post_hashtags_period_label_idx on post_hashtags (period_label);
+create index if not exists post_hashtags_owner_username_idx on post_hashtags (owner_username);
+create index if not exists post_hashtags_hashtag_norm_idx on post_hashtags (hashtag_norm);
+
+-- ============================================================
+-- 14. post_mentions (normalized mentions per current post)
+-- ============================================================
+create table if not exists post_mentions (
+    id             serial primary key,
+    post_id        text not null references posts (id) on delete cascade,
+    run_id         integer references scrape_runs (id),
+    period_label   text not null,
+    owner_username text,
+    mention_raw    text not null,
+    mention_norm   text not null,
+    created_at     timestamptz default now(),
+    constraint uq_post_mention unique (post_id, mention_norm)
+);
+
+create index if not exists post_mentions_post_id_idx on post_mentions (post_id);
+create index if not exists post_mentions_run_id_idx on post_mentions (run_id);
+create index if not exists post_mentions_period_label_idx on post_mentions (period_label);
+create index if not exists post_mentions_owner_username_idx on post_mentions (owner_username);
+create index if not exists post_mentions_mention_norm_idx on post_mentions (mention_norm);
+
+-- ============================================================
+-- 15. post_tagged_users (normalized tagged users per current post)
+-- ============================================================
+create table if not exists post_tagged_users (
+    id               serial primary key,
+    post_id          text not null references posts (id) on delete cascade,
+    run_id           integer references scrape_runs (id),
+    period_label     text not null,
+    owner_username   text,
+    tagged_user_raw  text not null,
+    tagged_user_norm text not null,
+    created_at       timestamptz default now(),
+    constraint uq_post_tagged_user unique (post_id, tagged_user_norm)
+);
+
+create index if not exists post_tagged_users_post_id_idx on post_tagged_users (post_id);
+create index if not exists post_tagged_users_run_id_idx on post_tagged_users (run_id);
+create index if not exists post_tagged_users_period_label_idx on post_tagged_users (period_label);
+create index if not exists post_tagged_users_owner_username_idx on post_tagged_users (owner_username);
+create index if not exists post_tagged_users_tagged_user_norm_idx on post_tagged_users (tagged_user_norm);

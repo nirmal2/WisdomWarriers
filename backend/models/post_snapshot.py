@@ -24,6 +24,7 @@ class PostSnapshot(Base):
     input_url = Column(Text)
     hashtags = Column(JSONB, default=list)
     mentions = Column(JSONB, default=list)
+    tagged_users = Column(JSONB, default=list)
     coauthor_producers = Column(JSONB, default=list)
     period_label = Column(Text, nullable=False, index=True)
     scraped_at = Column(DateTime(timezone=True), server_default=func.now())
