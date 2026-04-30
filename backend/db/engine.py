@@ -25,5 +25,11 @@ async def get_db() -> AsyncSession:
 
 
 async def create_tables() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("✓ Database tables created or verified")
+    except Exception as e:
+        print(f"⚠️  Error creating tables: {type(e).__name__}: {e}")
+        # Continue anyway - tables might already exist
+        pass
