@@ -1,5 +1,12 @@
 from sqlalchemy import Column, Integer, Text, DateTime, ForeignKey, func, Boolean
-from sqlalchemy.dialects.postgresql import JSONB, VECTOR
+from sqlalchemy.dialects.postgresql import JSONB
+
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    # Fallback: use Text if pgvector not installed
+    Vector = Text
+
 from backend.db.base import Base
 
 
@@ -30,5 +37,5 @@ class PostSnapshot(Base):
     coauthor_producers = Column(JSONB, default=list)
     period_label = Column(Text, nullable=False, index=True)
     is_pinned = Column(Boolean, default=False)
-    embedding = Column(VECTOR(1536), nullable=True)
+    embedding = Column(Vector(1536), nullable=True)
     scraped_at = Column(DateTime(timezone=True), server_default=func.now())
