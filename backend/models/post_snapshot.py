@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, Text, DateTime, ForeignKey, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, Integer, Text, DateTime, ForeignKey, func, Boolean
+from sqlalchemy.dialects.postgresql import JSONB, VECTOR
 from backend.db.base import Base
 
 
@@ -13,6 +13,8 @@ class PostSnapshot(Base):
     url = Column(Text, nullable=False, index=True)
     timestamp = Column(DateTime(timezone=True), nullable=True)
     likes_count = Column(Integer, default=0)
+    comments_count = Column(Integer, default=0)
+    video_view_count = Column(Integer, default=0)
     video_play_count = Column(Integer, default=0)
     type = Column(Text)
     video_url = Column(Text)
@@ -27,4 +29,6 @@ class PostSnapshot(Base):
     tagged_users = Column(JSONB, default=list)
     coauthor_producers = Column(JSONB, default=list)
     period_label = Column(Text, nullable=False, index=True)
+    is_pinned = Column(Boolean, default=False)
+    embedding = Column(VECTOR(1536), nullable=True)
     scraped_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -14,9 +14,20 @@ depends_on = None
 
 def upgrade() -> None:
     # ============================================================
+    # 0. Add missing columns to post_snapshots (if they don't exist)
+    # ============================================================
+    op.execute(
+        """
+        ALTER TABLE post_snapshots
+        ADD COLUMN IF NOT EXISTS comments_count INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS video_view_count INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS embedding vector(1536) DEFAULT NULL;
+        """
+    )
+
+    # ============================================================
     # 1. Rebuild post_engagement VIEW to use post_snapshots + current_posts
-    #    Note: post_snapshots lacks comments_count, video_view_count, is_pinned
-    #    Using available columns and coalescing missing ones to 0
     # ============================================================
     op.execute(
         """
@@ -31,15 +42,15 @@ def upgrade() -> None:
             cp.type,
             cp.product_type,
             cp.likes_count,
-            0 AS comments_count,
-            0 AS video_view_count,
+            COALESCE(cp.comments_count, 0) AS comments_count,
+            COALESCE(cp.video_view_count, 0) AS video_view_count,
             cp.video_play_count,
             cp.caption,
             cp.hashtags,
             cp.display_url,
             cp.display_storage_url,
             cp.url,
-            FALSE AS is_pinned,
+            COALESCE(cp.is_pinned, FALSE) AS is_pinned,
             cp.run_id,
             cp.scraped_at,
             pr.followers_count,
@@ -48,11 +59,11 @@ def upgrade() -> None:
             sp.grade,
             sp.category,
             ROUND(
-                (cp.likes_count + 0::int)::numeric
+                (cp.likes_count + COALESCE(cp.comments_count, 0))::numeric
                 / NULLIF(pr.followers_count, 0) * 100,
                 2
             ) AS engagement_rate,
-            (cp.likes_count + 0::int) AS total_interactions
+            (cp.likes_count + COALESCE(cp.comments_count, 0)) AS total_interactions
         FROM current_posts cp
         LEFT JOIN profiles pr ON pr.username = cp.owner_username
         LEFT JOIN scrape_profiles sp ON sp.username = cp.owner_username
@@ -90,8 +101,6 @@ def upgrade() -> None:
 
     # ============================================================
     # 3. Rebuild search_similar_posts function to use current_posts
-    #    Note: This function now looks for embeddings on post_snapshots
-    #    (future: may need dedicated embeddings table)
     # ============================================================
     op.execute(
         """
@@ -120,18 +129,17 @@ def upgrade() -> None:
                 cp.display_storage_url,
                 cp.likes_count,
                 ROUND(
-                    (cp.likes_count + cp.comments_count)::numeric
+                    (cp.likes_count + COALESCE(cp.comments_count, 0))::numeric
                     / NULLIF(pr.followers_count, 0) * 100,
                     2
                 ) AS engagement_rate,
-                1 - (ps.embedding <=> query_embedding) AS similarity
+                (1 - (cp.embedding <=> query_embedding))::float AS similarity
             FROM current_posts cp
-            LEFT JOIN post_snapshots ps ON ps.url = cp.url
             LEFT JOIN profiles pr ON pr.username = cp.owner_username
             WHERE
-                ps.embedding IS NOT NULL
+                cp.embedding IS NOT NULL
                 AND (filter_username IS NULL OR cp.owner_username = filter_username)
-            ORDER BY ps.embedding <=> query_embedding
+            ORDER BY cp.embedding <=> query_embedding
             LIMIT result_limit
         $$
         """
