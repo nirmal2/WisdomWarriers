@@ -16,7 +16,17 @@ def upgrade() -> None:
     op.execute("DROP TABLE IF EXISTS post_tagged_users")
     op.execute("DROP TABLE IF EXISTS post_mentions")
     op.execute("DROP TABLE IF EXISTS post_hashtags")
-    op.execute("DROP TABLE IF EXISTS posts")
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            DROP TABLE IF EXISTS posts;
+        EXCEPTION
+            WHEN dependent_objects_still_exist THEN
+                RAISE NOTICE 'Skipping drop of posts table because dependent views/materialized views still exist.';
+        END $$;
+        """
+    )
 
 
 def downgrade() -> None:
