@@ -8,7 +8,6 @@ from pathlib import Path
 from sqlalchemy import func, select
 
 from backend.db.engine import AsyncSessionLocal
-from backend.models.post import Post
 from backend.models.post_snapshot import PostSnapshot
 from backend.models.scrape_run import ScrapeRun
 from backend.repositories import post_repo, scrape_run_repo
@@ -51,7 +50,6 @@ async def recover(debug_file: Path) -> dict:
         period_label = ref_date.strftime("%Y-%m-%d")
         scraped_at = run.started_at or datetime.now(timezone.utc)
 
-        post_columns = set(Post.__table__.columns.keys())
         snapshot_columns = set(PostSnapshot.__table__.columns.keys())
 
         for item in normalized:
@@ -67,27 +65,24 @@ async def recover(debug_file: Path) -> dict:
             row["scraped_at"] = scraped_at
             row["timestamp"] = parse_dt(row.get("timestamp"))
 
-            post_data = {k: v for k, v in row.items() if k in post_columns}
-            await post_repo.upsert_post(db, post_data)
-
             snapshot_data = {
-                "post_id": post_data["id"],
+                "post_id": row["id"],
                 "run_id": run_id,
-                "owner_username": post_data.get("owner_username"),
-                "url": post_data["url"],
-                "timestamp": post_data.get("timestamp"),
-                "likes_count": post_data.get("likes_count", 0) or 0,
-                "video_play_count": post_data.get("video_play_count", 0) or 0,
-                "type": post_data.get("type"),
-                "video_url": post_data.get("video_url"),
-                "display_url": post_data.get("display_url"),
-                "display_storage_path": post_data.get("display_storage_path"),
-                "display_storage_url": post_data.get("display_storage_url"),
-                "caption": post_data.get("caption"),
-                "product_type": post_data.get("product_type"),
-                "input_url": post_data.get("input_url"),
-                "hashtags": post_data.get("hashtags") or [],
-                "coauthor_producers": post_data.get("coauthor_producers") or [],
+                "owner_username": row.get("owner_username"),
+                "url": row["url"],
+                "timestamp": row.get("timestamp"),
+                "likes_count": row.get("likes_count", 0) or 0,
+                "video_play_count": row.get("video_play_count", 0) or 0,
+                "type": row.get("type"),
+                "video_url": row.get("video_url"),
+                "display_url": row.get("display_url"),
+                "display_storage_path": row.get("display_storage_path"),
+                "display_storage_url": row.get("display_storage_url"),
+                "caption": row.get("caption"),
+                "product_type": row.get("product_type"),
+                "input_url": row.get("input_url"),
+                "hashtags": row.get("hashtags") or [],
+                "coauthor_producers": row.get("coauthor_producers") or [],
                 "period_label": period_label,
                 "scraped_at": scraped_at,
             }
@@ -111,7 +106,6 @@ async def recover(debug_file: Path) -> dict:
         await db.commit()
 
     async with AsyncSessionLocal() as db:
-        posts_rows = await db.scalar(select(func.count()).select_from(Post).where(Post.run_id == run_id))
         snapshot_rows = await db.scalar(select(func.count()).select_from(PostSnapshot).where(PostSnapshot.run_id == run_id))
 
     return {
@@ -119,7 +113,6 @@ async def recover(debug_file: Path) -> dict:
         "period_label": period_label,
         "imported_posts": imported,
         "skipped_non_post_urls": skipped_non_post_url,
-        "posts_rows_for_run": int(posts_rows or 0),
         "snapshot_rows_for_run": int(snapshot_rows or 0),
     }
 

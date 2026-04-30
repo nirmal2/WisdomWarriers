@@ -2,15 +2,10 @@ from datetime import date
 from typing import Optional, Sequence
 from sqlalchemy import Date, Text, and_, cast, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from backend.models.post import Post
-from backend.models.post_hashtag import PostHashtag
-from backend.models.post_mention import PostMention
-from backend.models.post_tagged_user import PostTaggedUser
 from backend.models.post_snapshot import PostSnapshot
 from backend.models.post_snapshot_hashtag import PostSnapshotHashtag
 from backend.models.post_snapshot_mention import PostSnapshotMention
 from backend.models.post_snapshot_tagged_user import PostSnapshotTaggedUser
-from backend.models.profile import Profile
 
 
 TAGGED_GROUP_TERMS = {
@@ -32,57 +27,17 @@ TAGGED_GROUP_TERMS = {
 }
 
 
-async def upsert_post(db: AsyncSession, data: dict) -> Post:
-    owner_username = (data.get("owner_username") or "").strip()
-    if owner_username and not data.get("profile_id"):
-        profile_id = await db.scalar(
-            select(Profile.id).where(func.lower(Profile.username) == owner_username.lower()).limit(1)
-        )
-        if profile_id is not None:
-            data["profile_id"] = profile_id
-
-    post = await db.get(Post, data["id"])
-    if post is None:
-        post = Post(**data)
-        db.add(post)
-    else:
-        for k, v in data.items():
-            setattr(post, k, v)
-    await db.flush()
-
-    if "hashtags" in data:
-        await replace_post_hashtags(
-            db,
-            post_id=post.id,
-            run_id=post.run_id,
-            period_label=post.period_label,
-            owner_username=post.owner_username,
-            hashtags=post.hashtags or [],
-        )
-    if "mentions" in data:
-        await replace_post_mentions(
-            db,
-            post_id=post.id,
-            run_id=post.run_id,
-            period_label=post.period_label,
-            owner_username=post.owner_username,
-            mentions=post.mentions or [],
-        )
-    if "tagged_users" in data:
-        await replace_post_tagged_users(
-            db,
-            post_id=post.id,
-            run_id=post.run_id,
-            period_label=post.period_label,
-            owner_username=post.owner_username,
-            tagged_users=post.tagged_users or [],
-        )
-
-    return post
-
-
-async def get_post_by_id(db: AsyncSession, post_id: str) -> Optional[Post]:
-    return await db.get(Post, post_id)
+async def get_post_by_id(db: AsyncSession, post_id: str) -> Optional[dict]:
+    result = await db.execute(
+        select(PostSnapshot)
+        .where(PostSnapshot.post_id == post_id)
+        .order_by(PostSnapshot.scraped_at.desc(), PostSnapshot.id.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    return _snapshot_to_post_read(row)
 
 
 async def get_snapshots_by_url(db: AsyncSession, post_url: str) -> Sequence[PostSnapshot]:
@@ -99,125 +54,6 @@ async def insert_snapshot(db: AsyncSession, data: dict) -> PostSnapshot:
     db.add(snap)
     await db.flush()
     return snap
-
-
-async def replace_post_hashtags(
-    db: AsyncSession,
-    *,
-    post_id: str,
-    run_id: int | None,
-    period_label: str,
-    owner_username: str | None,
-    hashtags: Sequence[str] | None,
-) -> None:
-    await db.execute(delete(PostHashtag).where(PostHashtag.post_id == post_id))
-
-    if not hashtags:
-        return
-
-    seen: set[str] = set()
-    rows: list[PostHashtag] = []
-    for value in hashtags:
-        if not isinstance(value, str):
-            continue
-        raw = value.strip()
-        if not raw:
-            continue
-        norm = _normalize_hashtag(raw)
-        if not norm or norm in seen:
-            continue
-        seen.add(norm)
-        rows.append(
-            PostHashtag(
-                post_id=post_id,
-                run_id=run_id,
-                period_label=period_label,
-                owner_username=owner_username,
-                hashtag_raw=raw,
-                hashtag_norm=norm,
-            )
-        )
-
-    if rows:
-        db.add_all(rows)
-
-
-async def replace_post_mentions(
-    db: AsyncSession,
-    *,
-    post_id: str,
-    run_id: int | None,
-    period_label: str,
-    owner_username: str | None,
-    mentions: Sequence[str] | None,
-) -> None:
-    await db.execute(delete(PostMention).where(PostMention.post_id == post_id))
-
-    if not mentions:
-        return
-
-    seen: set[str] = set()
-    rows: list[PostMention] = []
-    for value in mentions:
-        if not isinstance(value, str):
-            continue
-        raw = value.strip()
-        if not raw:
-            continue
-        norm = _normalize_username(raw)
-        if not norm or norm in seen:
-            continue
-        seen.add(norm)
-        rows.append(
-            PostMention(
-                post_id=post_id,
-                run_id=run_id,
-                period_label=period_label,
-                owner_username=owner_username,
-                mention_raw=raw,
-                mention_norm=norm,
-            )
-        )
-
-    if rows:
-        db.add_all(rows)
-
-
-async def replace_post_tagged_users(
-    db: AsyncSession,
-    *,
-    post_id: str,
-    run_id: int | None,
-    period_label: str,
-    owner_username: str | None,
-    tagged_users: Sequence[object] | None,
-) -> None:
-    await db.execute(delete(PostTaggedUser).where(PostTaggedUser.post_id == post_id))
-
-    if not tagged_users:
-        return
-
-    seen: set[str] = set()
-    rows: list[PostTaggedUser] = []
-    for value in tagged_users:
-        norm = _extract_username(value)
-        if not norm or norm in seen:
-            continue
-        seen.add(norm)
-        raw = str(value).strip() if isinstance(value, str) else norm
-        rows.append(
-            PostTaggedUser(
-                post_id=post_id,
-                run_id=run_id,
-                period_label=period_label,
-                owner_username=owner_username,
-                tagged_user_raw=raw,
-                tagged_user_norm=norm,
-            )
-        )
-
-    if rows:
-        db.add_all(rows)
 
 
 def _normalize_hashtag(value: str) -> str:
@@ -245,6 +81,55 @@ def _extract_username(value: object) -> str | None:
         return None
     normalized = _normalize_username(candidate)
     return normalized or None
+
+
+def _snapshot_to_post_read(row: PostSnapshot) -> dict:
+    return {
+        "id": row.post_id,
+        "source_post_id": None,
+        "short_code": None,
+        "owner_username": row.owner_username,
+        "owner_full_name": None,
+        "owner_id": None,
+        "owner_profile_pic_url": None,
+        "location_name": None,
+        "location_id": None,
+        "url": row.url,
+        "timestamp": row.timestamp,
+        "likes_count": row.likes_count or 0,
+        "video_play_count": row.video_play_count or 0,
+        "video_view_count": 0,
+        "type": row.type,
+        "video_url": row.video_url,
+        "audio_url": None,
+        "video_duration": None,
+        "display_url": row.display_url,
+        "display_storage_path": row.display_storage_path,
+        "display_storage_url": row.display_storage_url,
+        "dimensions_height": None,
+        "dimensions_width": None,
+        "is_comments_disabled": False,
+        "alt": None,
+        "caption": row.caption,
+        "product_type": row.product_type,
+        "input_url": row.input_url,
+        "comments_count": 0,
+        "first_comment": None,
+        "latest_comments": [],
+        "images": [],
+        "child_posts": [],
+        "music_info": {},
+        "hashtags": row.hashtags or [],
+        "mentions": row.mentions or [],
+        "tagged_users": row.tagged_users or [],
+        "coauthor_producers": row.coauthor_producers or [],
+        "is_pinned": False,
+        "profile_id": None,
+        "scraped_at": row.scraped_at,
+        "period_label": row.period_label,
+        "run_id": row.run_id,
+        "embedding": None,
+    }
 
 
 async def replace_snapshot_hashtags(
@@ -411,7 +296,7 @@ async def list_posts(
     sort: str = "likes_count",
     limit: int = 50,
     offset: int = 0,
-) -> tuple[Sequence[Post], int]:
+) -> tuple[Sequence[dict], int]:
     if snapshot_run_id is not None:
         q = select(PostSnapshot).where(PostSnapshot.run_id == snapshot_run_id)
         parsed_date_from = _parse_iso_date(date_from)
@@ -535,71 +420,37 @@ async def list_posts(
         result = await db.execute(q)
         rows = result.scalars().all()
 
-        items = [
-            {
-                "id": row.post_id,
-                "source_post_id": None,
-                "short_code": None,
-                "owner_username": row.owner_username,
-                "owner_full_name": None,
-                "owner_id": None,
-                "owner_profile_pic_url": None,
-                "location_name": None,
-                "location_id": None,
-                "url": row.url,
-                "timestamp": row.timestamp,
-                "likes_count": row.likes_count or 0,
-                "video_play_count": row.video_play_count or 0,
-                "video_view_count": 0,
-                "type": row.type,
-                "video_url": row.video_url,
-                "audio_url": None,
-                "video_duration": None,
-                "display_url": row.display_url,
-                "display_storage_path": row.display_storage_path,
-                "display_storage_url": row.display_storage_url,
-                "dimensions_height": None,
-                "dimensions_width": None,
-                "is_comments_disabled": False,
-                "alt": None,
-                "caption": row.caption,
-                "product_type": row.product_type,
-                "input_url": row.input_url,
-                "comments_count": 0,
-                "first_comment": None,
-                "latest_comments": [],
-                "images": [],
-                "child_posts": [],
-                "music_info": {},
-                "hashtags": row.hashtags or [],
-                "mentions": [],
-                "tagged_users": row.tagged_users or [],
-                "coauthor_producers": row.coauthor_producers or [],
-                "is_pinned": False,
-                "profile_id": None,
-                "scraped_at": row.scraped_at,
-                "period_label": row.period_label,
-                "run_id": row.run_id,
-                "embedding": None,
-            }
-            for row in rows
-        ]
+        items = [_snapshot_to_post_read(row) for row in rows]
         return items, total
 
-    q = select(Post)
+    latest_snapshots = select(
+        PostSnapshot.id.label("snapshot_id"),
+        func.row_number()
+        .over(
+            partition_by=PostSnapshot.url,
+            order_by=(PostSnapshot.scraped_at.desc(), PostSnapshot.id.desc()),
+        )
+        .label("snapshot_rank"),
+    ).subquery()
+
+    q = (
+        select(PostSnapshot)
+        .join(latest_snapshots, latest_snapshots.c.snapshot_id == PostSnapshot.id)
+        .where(latest_snapshots.c.snapshot_rank == 1)
+    )
     parsed_date_from = _parse_iso_date(date_from)
     parsed_date_to = _parse_iso_date(date_to)
 
     if username:
-        q = q.where(Post.owner_username == username)
+        q = q.where(PostSnapshot.owner_username == username)
     if post_type:
-        q = q.where(func.lower(func.coalesce(Post.type, "")).like(f"%{post_type.lower()}%"))
+        q = q.where(func.lower(func.coalesce(PostSnapshot.type, "")).like(f"%{post_type.lower()}%"))
     if parsed_date_from:
-        q = q.where(cast(Post.timestamp, Date) >= parsed_date_from)
+        q = q.where(cast(PostSnapshot.timestamp, Date) >= parsed_date_from)
     if parsed_date_to:
-        q = q.where(cast(Post.timestamp, Date) <= parsed_date_to)
+        q = q.where(cast(PostSnapshot.timestamp, Date) <= parsed_date_to)
     if likes_min is not None:
-        q = q.where(Post.likes_count >= likes_min)
+        q = q.where(PostSnapshot.likes_count >= likes_min)
 
     hashtag_terms = _clean_filter_values([*(hashtags or []), hashtag] if hashtag else hashtags)
     mention_terms = _clean_filter_values(mentions)
@@ -614,8 +465,8 @@ async def list_posts(
                 exists(
                     select(1).where(
                         and_(
-                            PostHashtag.post_id == Post.id,
-                            PostHashtag.hashtag_norm.in_(normalized_terms),
+                            PostSnapshotHashtag.snapshot_id == PostSnapshot.id,
+                            PostSnapshotHashtag.hashtag_norm.in_(normalized_terms),
                         )
                     )
                 )
@@ -627,8 +478,8 @@ async def list_posts(
                 exists(
                     select(1).where(
                         and_(
-                            PostMention.post_id == Post.id,
-                            PostMention.mention_norm.in_(normalized_mention_terms),
+                            PostSnapshotMention.snapshot_id == PostSnapshot.id,
+                            PostSnapshotMention.mention_norm.in_(normalized_mention_terms),
                         )
                     )
                 )
@@ -640,14 +491,14 @@ async def list_posts(
                 exists(
                     select(1).where(
                         and_(
-                            PostTaggedUser.post_id == Post.id,
-                            PostTaggedUser.tagged_user_norm.in_(normalized_tagged_user_terms),
+                            PostSnapshotTaggedUser.snapshot_id == PostSnapshot.id,
+                            PostSnapshotTaggedUser.tagged_user_norm.in_(normalized_tagged_user_terms),
                         )
                     )
                 )
             )
     if keyword_terms:
-        caption_text = func.lower(func.coalesce(Post.caption, ""))
+        caption_text = func.lower(func.coalesce(PostSnapshot.caption, ""))
         content_filters.extend(caption_text.like(f"%{term.lower()}%") for term in keyword_terms)
     if content_filters:
         q = q.where(or_(*content_filters))
@@ -660,8 +511,8 @@ async def list_posts(
                 exists(
                     select(1).where(
                         and_(
-                            PostHashtag.post_id == Post.id,
-                            PostHashtag.hashtag_norm.in_(normalized_group_terms),
+                            PostSnapshotHashtag.snapshot_id == PostSnapshot.id,
+                            PostSnapshotHashtag.hashtag_norm.in_(normalized_group_terms),
                         )
                     )
                 )
@@ -672,22 +523,22 @@ async def list_posts(
                 or_(
                     *[
                         or_(
-                            func.lower(func.coalesce(Post.caption, "")).like(f"%{term}%"),
-                            func.lower(func.coalesce(Post.owner_username, "")).like(f"%{term}%"),
+                            func.lower(func.coalesce(PostSnapshot.caption, "")).like(f"%{term}%"),
+                            func.lower(func.coalesce(PostSnapshot.owner_username, "")).like(f"%{term}%"),
                             hashtag_exists,
-                            func.lower(func.coalesce(cast(Post.coauthor_producers, Text), "")).like(f"%{term}%"),
+                            func.lower(func.coalesce(cast(PostSnapshot.coauthor_producers, Text), "")).like(f"%{term}%"),
                         )
                         for term in terms
                     ]
                 )
             )
     if period_label:
-        q = q.where(Post.period_label == period_label)
+        q = q.where(PostSnapshot.period_label == period_label)
 
     count_result = await db.execute(select(func.count()).select_from(q.subquery()))
     total = count_result.scalar_one()
 
-    sort_col = getattr(Post, sort, Post.likes_count)
+    sort_col = getattr(PostSnapshot, sort, PostSnapshot.likes_count)
     q = q.order_by(sort_col.desc()).limit(limit).offset(offset)
     result = await db.execute(q)
-    return result.scalars().all(), total
+    return [_snapshot_to_post_read(row) for row in result.scalars().all()], total

@@ -54,5 +54,5 @@ async def get_post(post_id: str, db: AsyncSession = Depends(get_db)) -> PostDeta
     post = await get_post_by_id(db, post_id)
     if not post:
         raise HTTPException(404)
-    snapshots = await get_snapshots_by_url(db, post.url)
-    return PostDetail.model_validate({**post.__dict__, "snapshots": snapshots})
+    snapshots = await get_snapshots_by_url(db, post["url"])
+    return PostDetail.model_validate({**post, "snapshots": snapshots})

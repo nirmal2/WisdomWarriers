@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 from sqlalchemy import delete, func, select
 
 from backend.db.engine import AsyncSessionLocal
-from backend.models.post import Post
 from backend.models.post_snapshot import PostSnapshot
 from backend.models.profile import Profile
 from backend.models.profile_snapshot import ProfileSnapshot
@@ -52,9 +51,6 @@ async def _purge_ignored_instagram_account(db) -> None:
         delete(ScrapeProfile).where(func.lower(ScrapeProfile.username).in_(ignored_usernames))
     )
     await db.execute(
-        delete(Post).where(func.lower(Post.owner_username).in_(ignored_usernames))
-    )
-    await db.execute(
         delete(PostSnapshot).where(func.lower(PostSnapshot.owner_username).in_(ignored_usernames))
     )
 
@@ -63,12 +59,6 @@ async def _purge_ignored_instagram_account(db) -> None:
         await db.execute(delete(Profile).where(Profile.id.in_(profile_ids)))
 
     await db.commit()
-
-
-async def _reset_posts_table(db) -> int:
-    result = await db.execute(delete(Post))
-    await db.flush()
-    return result.rowcount or 0
 
 
 def _parse_iso_date(value: str | None) -> date | None:
@@ -204,17 +194,10 @@ async def run_posts_scrape(
         period_label = derive_period_label(frequency)
         fetched = 0
         skipped_outside_range = 0
-        deleted_posts = 0
         embedding_status = "pending" if enable_embeddings else "skipped"
         embedding_error_message: str | None = None
         try:
             await _append_run_log(db, run.id, f"Posts stage started for {len(usernames)} profile(s).")
-            deleted_posts = await _reset_posts_table(db)
-            await _append_run_log(
-                db,
-                run.id,
-                f"Posts stage reset canonical posts table and removed {deleted_posts} existing row(s).",
-            )
             await db.commit()
             if date_from or date_to:
                 requested_window = f"{date_from or 'any'} → {date_to or 'any'}"
@@ -311,7 +294,6 @@ async def run_posts_scrape(
                 norm["period_label"] = period_label
                 norm["scraped_at"] = scraped_at
                 norm["run_id"] = run.id
-                await post_repo.upsert_post(db, norm)
                 snap = await post_repo.insert_snapshot(db, {
                     "post_id": norm["id"],
                     "run_id": run.id,
@@ -737,7 +719,6 @@ async def recover_posts_from_debug(run_id: int) -> dict:
 
         period_label = (run.started_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
         scraped_at = run.started_at or datetime.now(timezone.utc)
-        post_columns = set(Post.__table__.columns.keys())
         snapshot_columns = set(PostSnapshot.__table__.columns.keys())
 
         for item in normalized:
@@ -753,29 +734,26 @@ async def recover_posts_from_debug(run_id: int) -> dict:
             row["scraped_at"] = scraped_at
             row["timestamp"] = _parse_dt(row.get("timestamp"))
 
-            post_data = {k: v for k, v in row.items() if k in post_columns}
-            await post_repo.upsert_post(db, post_data)
-
             snap_data = {
-                "post_id": post_data["id"],
+                "post_id": row["id"],
                 "run_id": run_id,
-                "owner_username": post_data.get("owner_username"),
-                "url": post_data["url"],
-                "timestamp": post_data.get("timestamp"),
-                "likes_count": post_data.get("likes_count", 0) or 0,
-                "video_play_count": post_data.get("video_play_count", 0) or 0,
-                "type": post_data.get("type"),
-                "video_url": post_data.get("video_url"),
-                "display_url": post_data.get("display_url"),
-                "display_storage_path": post_data.get("display_storage_path"),
-                "display_storage_url": post_data.get("display_storage_url"),
-                "caption": post_data.get("caption"),
-                "product_type": post_data.get("product_type"),
-                "input_url": post_data.get("input_url"),
-                "hashtags": post_data.get("hashtags") or [],
-                "mentions": post_data.get("mentions") or [],
-                "tagged_users": post_data.get("tagged_users") or [],
-                "coauthor_producers": post_data.get("coauthor_producers") or [],
+                "owner_username": row.get("owner_username"),
+                "url": row["url"],
+                "timestamp": row.get("timestamp"),
+                "likes_count": row.get("likes_count", 0) or 0,
+                "video_play_count": row.get("video_play_count", 0) or 0,
+                "type": row.get("type"),
+                "video_url": row.get("video_url"),
+                "display_url": row.get("display_url"),
+                "display_storage_path": row.get("display_storage_path"),
+                "display_storage_url": row.get("display_storage_url"),
+                "caption": row.get("caption"),
+                "product_type": row.get("product_type"),
+                "input_url": row.get("input_url"),
+                "hashtags": row.get("hashtags") or [],
+                "mentions": row.get("mentions") or [],
+                "tagged_users": row.get("tagged_users") or [],
+                "coauthor_producers": row.get("coauthor_producers") or [],
                 "period_label": period_label,
                 "scraped_at": scraped_at,
             }
@@ -784,29 +762,29 @@ async def recover_posts_from_debug(run_id: int) -> dict:
             await post_repo.replace_snapshot_hashtags(
                 db,
                 snapshot_id=snap.id,
-                post_id=post_data["id"],
+                post_id=row["id"],
                 run_id=run_id,
                 period_label=period_label,
-                owner_username=post_data.get("owner_username"),
-                hashtags=post_data.get("hashtags") or [],
+                owner_username=row.get("owner_username"),
+                hashtags=row.get("hashtags") or [],
             )
             await post_repo.replace_snapshot_mentions(
                 db,
                 snapshot_id=snap.id,
-                post_id=post_data["id"],
+                post_id=row["id"],
                 run_id=run_id,
                 period_label=period_label,
-                owner_username=post_data.get("owner_username"),
-                mentions=post_data.get("mentions") or [],
+                owner_username=row.get("owner_username"),
+                mentions=row.get("mentions") or [],
             )
             await post_repo.replace_snapshot_tagged_users(
                 db,
                 snapshot_id=snap.id,
-                post_id=post_data["id"],
+                post_id=row["id"],
                 run_id=run_id,
                 period_label=period_label,
-                owner_username=post_data.get("owner_username"),
-                tagged_users=post_data.get("tagged_users") or [],
+                owner_username=row.get("owner_username"),
+                tagged_users=row.get("tagged_users") or [],
             )
             imported += 1
 

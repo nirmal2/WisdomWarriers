@@ -112,7 +112,14 @@ async def get_overview(db: AsyncSession) -> dict:
     result = await db.execute(text("""
         SELECT
             (SELECT COUNT(*) FROM profiles) AS total_profiles,
-            (SELECT COUNT(*) FROM posts) AS total_posts,
+            (
+                SELECT COUNT(*)
+                FROM (
+                    SELECT DISTINCT ON (url) id
+                    FROM post_snapshots
+                    ORDER BY url, scraped_at DESC NULLS LAST, id DESC
+                ) latest_posts
+            ) AS total_posts,
             (SELECT COALESCE(AVG(followers_count), 0) FROM profiles) AS avg_followers,
             (SELECT username FROM profiles ORDER BY followers_count DESC LIMIT 1) AS top_profile,
             (SELECT MAX(period_label) FROM account_monthly_summary) AS latest_period,
