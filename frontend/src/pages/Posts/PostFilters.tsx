@@ -126,20 +126,7 @@ export function PostFilters({ onFilter }: FiltersProps) {
     keywords: keywords.length ? keywords : undefined,
   })
 
-  const reset = () => {
-    setUsername("")
-    setPostType("")
-    setDateFrom("")
-    setDateTo("")
-    setLikesMin("")
-    setHashtags(DEFAULT_HASHTAGS)
-    setMentions(DEFAULT_MENTIONS)
-    setKeywords(DEFAULT_KEYWORDS)
-    setNewHashtag("")
-    setNewMention("")
-    setNewKeyword("")
-    onFilter({})
-  }
+
 
   return (
     <div className="space-y-4 rounded-xl border border-gray-800 bg-gray-950/50 p-4">
