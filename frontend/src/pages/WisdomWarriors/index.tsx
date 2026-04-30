@@ -293,17 +293,6 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
     setAppliedKeywords(draftKeywords)
   }
 
-  function resetFilters() {
-    setDraftHashtags(FILTER_HASHTAGS)
-    setDraftMentions(FILTER_MENTIONS)
-    setDraftTaggedUsers(FILTER_TAGGED_USERS)
-    setDraftKeywords(FILTER_CAPTION_KEYWORDS)
-    setAppliedHashtags(FILTER_HASHTAGS)
-    setAppliedMentions(FILTER_MENTIONS)
-    setAppliedTaggedUsers(FILTER_TAGGED_USERS)
-    setAppliedKeywords(FILTER_CAPTION_KEYWORDS)
-  }
-
   const tabs: Tab[] = ["Dedicated", "In-house influencer"]
 
   return (
@@ -572,13 +561,6 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
             </div>
           </div>
           <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
-            >
-              Reset
-            </button>
             <button
               type="button"
               onClick={applyFilters}
