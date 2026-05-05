@@ -1,5 +1,5 @@
 from typing import Any, Optional, Sequence
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.scrape_run import ScrapeRun
 from datetime import datetime, timezone
@@ -35,6 +35,26 @@ async def fail_incomplete_runs(db: AsyncSession, reason: str) -> int:
                 run.embedding_error_message = reason
     await db.flush()
     return len(runs)
+
+
+async def claim_incomplete_runs_for_resume(db: AsyncSession) -> list[ScrapeRun]:
+    """Atomically claim running runs so only one process attempts auto-resume."""
+    claim_result = await db.execute(
+        update(ScrapeRun)
+        .where(ScrapeRun.status == "running")
+        .values(status="resuming", finished_at=None, error_message=None)
+        .returning(ScrapeRun.id)
+    )
+    run_ids = [row[0] for row in claim_result.all()]
+    if not run_ids:
+        return []
+
+    result = await db.execute(
+        select(ScrapeRun)
+        .where(ScrapeRun.id.in_(run_ids))
+        .order_by(ScrapeRun.started_at.asc())
+    )
+    return result.scalars().all()
 
 
 async def list_runs(

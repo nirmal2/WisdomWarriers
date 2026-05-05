@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from datetime import date, datetime, timezone
 from functools import partial
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,9 @@ from sqlalchemy import delete, func, select
 
 from backend.db.engine import AsyncSessionLocal
 from backend.models.post_snapshot import PostSnapshot
+from backend.models.post_snapshot_hashtag import PostSnapshotHashtag
+from backend.models.post_snapshot_mention import PostSnapshotMention
+from backend.models.post_snapshot_tagged_user import PostSnapshotTaggedUser
 from backend.models.profile import Profile
 from backend.models.profile_snapshot import ProfileSnapshot
 from backend.models.scrape_run import ScrapeRun
@@ -25,6 +29,221 @@ from backend.config import get_settings
 from backend.services.embedding.indexer import embed_and_index_posts, embed_and_index_profiles
 from backend.services.scheduler.period import derive_period_label
 from backend.services.storage import upload_display_image_to_supabase, upload_profile_image_to_supabase
+
+
+_RESUME_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _track_resume_task(task: asyncio.Task[Any]) -> None:
+    _RESUME_TASKS.add(task)
+
+    def _on_done(done_task: asyncio.Task[Any]) -> None:
+        _RESUME_TASKS.discard(done_task)
+        try:
+            done_task.result()
+        except Exception:
+            logger.exception("Auto-resume task failed")
+
+    task.add_done_callback(_on_done)
+
+
+def build_posts_resume_payload(
+    usernames: list[str],
+    trigger: str,
+    schedule_id: int | None,
+    results_limit: int,
+    only_posts_newer_than: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    frequency: str,
+    data_detail_level: str,
+    batch_mode: bool,
+    enable_embeddings: bool,
+    apify_token: str | None,
+) -> str:
+    payload = {
+        "type": "posts",
+        "usernames": usernames,
+        "trigger": trigger,
+        "schedule_id": schedule_id,
+        "results_limit": results_limit,
+        "only_posts_newer_than": only_posts_newer_than,
+        "date_from": date_from,
+        "date_to": date_to,
+        "frequency": frequency,
+        "data_detail_level": data_detail_level,
+        "batch_mode": batch_mode,
+        "enable_embeddings": enable_embeddings,
+        "apify_token": apify_token,
+    }
+    return json.dumps(payload)
+
+
+def build_profiles_resume_payload(
+    usernames: list[str],
+    trigger: str,
+    schedule_id: int | None,
+    frequency: str,
+    batch_mode: bool,
+    enable_embeddings: bool,
+    apify_token: str | None,
+) -> str:
+    payload = {
+        "type": "profiles",
+        "usernames": usernames,
+        "trigger": trigger,
+        "schedule_id": schedule_id,
+        "frequency": frequency,
+        "batch_mode": batch_mode,
+        "enable_embeddings": enable_embeddings,
+        "apify_token": apify_token,
+    }
+    return json.dumps(payload)
+
+
+def build_combined_resume_payload(
+    usernames: list[str],
+    trigger: str,
+    schedule_id: int | None,
+    frequency: str,
+    results_limit: int,
+    only_posts_newer_than: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    data_detail_level: str,
+    batch_mode: bool,
+    enable_embeddings: bool,
+    apify_token: str | None,
+) -> str:
+    payload = {
+        "type": "combined",
+        "usernames": usernames,
+        "trigger": trigger,
+        "schedule_id": schedule_id,
+        "frequency": frequency,
+        "results_limit": results_limit,
+        "only_posts_newer_than": only_posts_newer_than,
+        "date_from": date_from,
+        "date_to": date_to,
+        "data_detail_level": data_detail_level,
+        "batch_mode": batch_mode,
+        "enable_embeddings": enable_embeddings,
+        "apify_token": apify_token,
+    }
+    return json.dumps(payload)
+
+
+def _parse_resume_payload(raw_payload: str | None) -> dict[str, Any]:
+    if not raw_payload:
+        return {}
+    try:
+        payload = json.loads(raw_payload)
+        return payload if isinstance(payload, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+async def _delete_run_artifacts(db, run_id: int) -> None:
+    # Remove partial run artifacts before retrying so resumed runs do not duplicate rows.
+    await db.execute(delete(PostSnapshotTaggedUser).where(PostSnapshotTaggedUser.run_id == run_id))
+    await db.execute(delete(PostSnapshotMention).where(PostSnapshotMention.run_id == run_id))
+    await db.execute(delete(PostSnapshotHashtag).where(PostSnapshotHashtag.run_id == run_id))
+    await db.execute(delete(PostSnapshot).where(PostSnapshot.run_id == run_id))
+    await db.execute(delete(ProfileSnapshot).where(ProfileSnapshot.run_id == run_id))
+
+
+async def _resume_run(run_id: int) -> None:
+    async with AsyncSessionLocal() as db:
+        run = await db.get(ScrapeRun, run_id)
+        if run is None:
+            return
+        fallback_scraper_type = run.scraper_type
+        fallback_trigger = run.trigger
+        payload = _parse_resume_payload(run.resume_payload)
+        usernames = payload.get("usernames")
+        if not isinstance(usernames, list) or not usernames:
+            scrape_profiles_result = await db.execute(select(ScrapeProfile).order_by(ScrapeProfile.position, ScrapeProfile.id))
+            usernames = [row.username for row in scrape_profiles_result.scalars().all()]
+        else:
+            usernames = [str(username).strip() for username in usernames if str(username).strip()]
+
+        await _append_run_log(db, run.id, "Server restarted; resuming scrape run from persisted settings.")
+        await _delete_run_artifacts(db, run.id)
+        await scrape_run_repo.update_run(db, run.id, {
+            "status": "running",
+            "finished_at": None,
+            "items_fetched": 0,
+            "error_message": None,
+            "embedding_error_message": None,
+        })
+        await db.commit()
+
+    run_type = str(payload.get("type") or fallback_scraper_type or "").strip().lower()
+    trigger = str(payload.get("trigger") or fallback_trigger or "manual")
+    schedule_id = payload.get("schedule_id")
+
+    if run_type == "profiles":
+        await run_profiles_scrape(
+            usernames=usernames,
+            trigger=trigger,
+            schedule_id=schedule_id,
+            frequency=str(payload.get("frequency") or "on_demand"),
+            shared_scraped_at=None,
+            batch_mode=bool(payload.get("batch_mode", False)),
+            enable_embeddings=bool(payload.get("enable_embeddings", True)),
+            existing_run_id=run_id,
+            finalize_run=True,
+            apify_token=payload.get("apify_token"),
+        )
+        return
+
+    if run_type == "combined":
+        await run_combined_scrape(
+            usernames=usernames,
+            results_limit=int(payload.get("results_limit") or 100),
+            only_posts_newer_than=payload.get("only_posts_newer_than"),
+            date_from=payload.get("date_from"),
+            date_to=payload.get("date_to"),
+            data_detail_level=str(payload.get("data_detail_level") or "basicData"),
+            enable_embeddings=bool(payload.get("enable_embeddings", True)),
+            batch_mode=bool(payload.get("batch_mode", False)),
+            trigger=trigger,
+            schedule_id=schedule_id,
+            frequency=str(payload.get("frequency") or "on_demand"),
+            combined_run_id=run_id,
+            apify_token=payload.get("apify_token"),
+        )
+        return
+
+    await run_posts_scrape(
+        usernames=usernames,
+        scraper_type="posts",
+        trigger=trigger,
+        schedule_id=schedule_id,
+        results_limit=int(payload.get("results_limit") or 100),
+        only_posts_newer_than=payload.get("only_posts_newer_than"),
+        date_from=payload.get("date_from"),
+        date_to=payload.get("date_to"),
+        frequency=str(payload.get("frequency") or "on_demand"),
+        data_detail_level=str(payload.get("data_detail_level") or "basicData"),
+        shared_scraped_at=None,
+        enable_embeddings=bool(payload.get("enable_embeddings", True)),
+        batch_mode=bool(payload.get("batch_mode", False)),
+        existing_run_id=run_id,
+        finalize_run=True,
+        apify_token=payload.get("apify_token"),
+    )
+
+
+async def resume_incomplete_runs_on_startup() -> int:
+    async with AsyncSessionLocal() as db:
+        runs = await scrape_run_repo.claim_incomplete_runs_for_resume(db)
+        await db.commit()
+
+    for run in runs:
+        task = asyncio.create_task(_resume_run(run.id), name=f"resume-scrape-run-{run.id}")
+        _track_resume_task(task)
+    return len(runs)
 
 
 def _post_id(url: str, period_label: str) -> str:
@@ -168,6 +387,20 @@ async def run_posts_scrape(
     finalize_run: bool = True,
     apify_token: str | None = None,
 ) -> int:
+    resume_payload = build_posts_resume_payload(
+        usernames=usernames,
+        trigger=trigger,
+        schedule_id=schedule_id,
+        results_limit=results_limit,
+        only_posts_newer_than=only_posts_newer_than,
+        date_from=date_from,
+        date_to=date_to,
+        frequency=frequency,
+        data_detail_level=data_detail_level,
+        batch_mode=batch_mode,
+        enable_embeddings=enable_embeddings,
+        apify_token=apify_token,
+    )
     async with AsyncSessionLocal() as db:
         await _purge_ignored_instagram_account(db)
         if existing_run_id is not None:
@@ -180,6 +413,7 @@ async def run_posts_scrape(
                 "profiles_requested": len(usernames),
                 "error_message": None,
                 "embedding_error_message": None,
+                "resume_payload": resume_payload,
             })
         else:
             run = await scrape_run_repo.create_run(db, {
@@ -188,6 +422,7 @@ async def run_posts_scrape(
                 "schedule_id": schedule_id,
                 "embedding_status": "pending" if enable_embeddings else "skipped",
                 "profiles_requested": len(usernames),
+                "resume_payload": resume_payload,
             })
         scraped_at = shared_scraped_at or datetime.now(timezone.utc)
 
@@ -406,6 +641,15 @@ async def run_profiles_scrape(
     finalize_run: bool = True,
     apify_token: str | None = None,
 ) -> int:
+    resume_payload = build_profiles_resume_payload(
+        usernames=usernames,
+        trigger=trigger,
+        schedule_id=schedule_id,
+        frequency=frequency,
+        batch_mode=batch_mode,
+        enable_embeddings=enable_embeddings,
+        apify_token=apify_token,
+    )
     async with AsyncSessionLocal() as db:
         await _purge_ignored_instagram_account(db)
         if existing_run_id is not None:
@@ -418,6 +662,7 @@ async def run_profiles_scrape(
                 "profiles_requested": len(usernames),
                 "error_message": None,
                 "embedding_error_message": None,
+                "resume_payload": resume_payload,
             })
         else:
             run = await scrape_run_repo.create_run(db, {
@@ -426,6 +671,7 @@ async def run_profiles_scrape(
                 "schedule_id": schedule_id,
                 "embedding_status": "pending" if enable_embeddings else "skipped",
                 "profiles_requested": len(usernames),
+                "resume_payload": resume_payload,
             })
         await _append_run_log(db, run.id, f"Profiles stage started for {len(usernames)} profile(s).")
         await db.commit()
@@ -637,9 +883,24 @@ async def run_combined_scrape(
     """
     # Generate a shared timestamp for both scrapers
     shared_scraped_at = datetime.now(timezone.utc)
+    resume_payload = build_combined_resume_payload(
+        usernames=usernames,
+        trigger=trigger,
+        schedule_id=schedule_id,
+        frequency=frequency,
+        results_limit=results_limit,
+        only_posts_newer_than=only_posts_newer_than,
+        date_from=date_from,
+        date_to=date_to,
+        data_detail_level=data_detail_level,
+        batch_mode=batch_mode,
+        enable_embeddings=enable_embeddings,
+        apify_token=apify_token,
+    )
 
     if combined_run_id is not None:
         async with AsyncSessionLocal() as db:
+            await scrape_run_repo.update_run(db, combined_run_id, {"resume_payload": resume_payload})
             await _append_run_log(db, combined_run_id, "Combined scrape started.")
             await db.commit()
 

@@ -19,3 +19,4 @@ class ScrapeRun(Base):
     embedding_error_message = Column(Text, nullable=True)
     raw_logs = Column(Text, nullable=True)              # JSON array of raw scraper logs
     missing_usernames = Column(Text, nullable=True)     # JSON array of requested usernames with no profile data
+    resume_payload = Column(Text, nullable=True)        # JSON payload used to resume run after process restart

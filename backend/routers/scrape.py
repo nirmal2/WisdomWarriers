@@ -32,7 +32,15 @@ from backend.repositories.scrape_profile_repo import (
     update_scrape_profile_fields,
     delete_scrape_profile,
 )
-from backend.services.scrape_service import run_posts_scrape, run_profiles_scrape, run_combined_scrape, recover_posts_from_debug
+from backend.services.scrape_service import (
+    run_posts_scrape,
+    run_profiles_scrape,
+    run_combined_scrape,
+    recover_posts_from_debug,
+    build_posts_resume_payload,
+    build_profiles_resume_payload,
+    build_combined_resume_payload,
+)
 from backend.repositories.scrape_run_repo import (
     create_run,
     get_latest_post_deltas,
@@ -43,6 +51,19 @@ from backend.repositories.scrape_run_repo import (
 )
 
 router = APIRouter(prefix="/api/scrape", tags=["scrape"])
+RESUME_LOG_MARKER = "Server restarted; resuming scrape run from persisted settings."
+
+
+def _resume_detected_from_raw_logs(raw_logs: str | None) -> bool:
+    if not raw_logs:
+        return False
+    try:
+        lines = json.loads(raw_logs)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(lines, list):
+        return False
+    return any(isinstance(line, str) and RESUME_LOG_MARKER in line for line in lines)
 
 
 def _build_insights(summary: dict, profile_deltas: list[dict], latest_post_deltas: list[dict]) -> list[InsightRead]:
@@ -127,12 +148,39 @@ async def trigger_scrape(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     usernames = req.usernames or [row.username for row in await list_scrape_profiles(db)]
+    if req.scraper_type == "profiles":
+        resume_payload = build_profiles_resume_payload(
+            usernames=usernames,
+            trigger="manual",
+            schedule_id=None,
+            frequency="on_demand",
+            batch_mode=req.batch_mode,
+            enable_embeddings=req.enable_embeddings,
+            apify_token=req.apify_token,
+        )
+    else:
+        resume_payload = build_posts_resume_payload(
+            usernames=usernames,
+            trigger="manual",
+            schedule_id=None,
+            results_limit=req.results_limit,
+            only_posts_newer_than=req.only_posts_newer_than,
+            date_from=req.date_from,
+            date_to=req.date_to,
+            frequency="on_demand",
+            data_detail_level=req.data_detail_level,
+            batch_mode=req.batch_mode,
+            enable_embeddings=req.enable_embeddings,
+            apify_token=req.apify_token,
+        )
+
     run = await create_run(db, {
         "scraper_type": req.scraper_type,
         "trigger": "manual",
         "schedule_id": None,
         "embedding_status": "pending" if req.enable_embeddings else "skipped",
         "profiles_requested": len(usernames),
+        "resume_payload": resume_payload,
         "raw_logs": json.dumps([
             f"{req.scraper_type.title()} scrape queued for {len(usernames)} profile(s).",
         ]),
@@ -187,12 +235,27 @@ async def trigger_combined_scrape(
     Profiles are scraped first, then posts, using the same scraped_at timestamp for all records.
     """
     usernames = req.usernames or [row.username for row in await list_scrape_profiles(db)]
+    resume_payload = build_combined_resume_payload(
+        usernames=usernames,
+        trigger="manual",
+        schedule_id=None,
+        frequency="on_demand",
+        results_limit=req.results_limit,
+        only_posts_newer_than=req.only_posts_newer_than,
+        date_from=req.date_from,
+        date_to=req.date_to,
+        data_detail_level=req.data_detail_level,
+        batch_mode=req.batch_mode,
+        enable_embeddings=req.enable_embeddings,
+        apify_token=req.apify_token,
+    )
     run = await create_run(db, {
         "scraper_type": "combined",
         "trigger": "manual",
         "schedule_id": None,
         "embedding_status": "pending" if req.enable_embeddings else "skipped",
         "profiles_requested": len(usernames),
+        "resume_payload": resume_payload,
         "raw_logs": json.dumps([
             f"Combined scrape queued for {len(usernames)} profile(s).",
             "Preparing profiles stage...",
@@ -226,7 +289,15 @@ async def get_runs(
     db: AsyncSession = Depends(get_db),
 ) -> ScrapeRunListResponse:
     items, total = await list_runs(db, status, limit, offset)
-    return ScrapeRunListResponse(items=items, total=total)
+    parsed_items: list[ScrapeRunRead] = []
+    for run in items:
+        run_read = ScrapeRunRead.model_validate(run)
+        parsed_items.append(
+            run_read.model_copy(update={
+                "resume_detected": _resume_detected_from_raw_logs(run.raw_logs),
+            })
+        )
+    return ScrapeRunListResponse(items=parsed_items, total=total)
 
 
 @router.get("/status", response_model=ScrapeStatusRead)
@@ -249,7 +320,13 @@ async def get_scrape_status(
             run = latest_result.scalar_one_or_none()
 
     if run is None:
-        return ScrapeStatusRead(run=None, progress_pct=0, db_updates=ScrapeDbUpdateStatus(), logs=["No scrape run found yet."])
+        return ScrapeStatusRead(
+            run=None,
+            progress_pct=0,
+            db_updates=ScrapeDbUpdateStatus(),
+            resume_detected=False,
+            logs=["No scrape run found yet."],
+        )
 
     # Use immutable snapshot rows for per-run counts so values do not drop
     # when canonical Post rows are updated by later runs.
@@ -400,6 +477,11 @@ async def get_scrape_status(
     if aggregated_raw_logs:
         logs.extend(aggregated_raw_logs)
 
+    resume_detected = any(
+        isinstance(line, str) and RESUME_LOG_MARKER in line
+        for line in logs
+    )
+
     return ScrapeStatusRead(
         run=run,
         progress_pct=progress_pct,
@@ -409,6 +491,7 @@ async def get_scrape_status(
             profiles_touched=profiles_touched or 0,
             missing_usernames=missing_usernames,
         ),
+        resume_detected=resume_detected,
         logs=logs,
     )
 

@@ -1,13 +1,18 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 from backend.config import get_settings
 from backend.db.engine import AsyncSessionLocal, create_tables
 from backend.repositories.scrape_profile_repo import ensure_scrape_profiles_seeded
 from backend.repositories.scrape_run_repo import fail_incomplete_runs
 from backend.services.scheduler.setup import start_scheduler, stop_scheduler
 from backend.services.scheduler.jobs import load_all_schedules
+from backend.services.scrape_service import resume_incomplete_runs_on_startup
 from backend.routers import scrape, schedules, profiles, posts, analytics, chat
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -21,8 +26,18 @@ async def lifespan(app: FastAPI):
         usernames = []
     async with AsyncSessionLocal() as db:
         await ensure_scrape_profiles_seeded(db, usernames)
-        await fail_incomplete_runs(db, "Server restarted while scrape was in progress")
         await db.commit()
+
+    resumed_runs = 0
+    if settings.resume_incomplete_scrapes_on_startup:
+        resumed_runs = await resume_incomplete_runs_on_startup()
+        if resumed_runs:
+            logger.info("Queued %d incomplete scrape run(s) for auto-resume.", resumed_runs)
+    else:
+        async with AsyncSessionLocal() as db:
+            await fail_incomplete_runs(db, "Server restarted while scrape was in progress")
+            await db.commit()
+
     start_scheduler()
     await load_all_schedules()
     yield
