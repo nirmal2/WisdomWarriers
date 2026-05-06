@@ -156,6 +156,13 @@ async def _resume_run(run_id: int) -> None:
     async with AsyncSessionLocal() as db:
         run = await db.get(ScrapeRun, run_id)
         if run is None:
+            await scrape_run_repo.update_run(db, run_id, {
+                "status": "failed",
+                "finished_at": datetime.now(timezone.utc),
+                "error_message": "Failed to resume run after server restart: run could not be loaded.",
+            })
+            await db.commit()
+            logger.error("Failed to resume scrape run %s: run could not be loaded.", run_id)
             return
         fallback_scraper_type = run.scraper_type
         fallback_trigger = run.trigger
