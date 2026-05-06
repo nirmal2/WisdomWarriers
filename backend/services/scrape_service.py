@@ -166,6 +166,7 @@ async def _resume_run(run_id: int) -> None:
             return
         fallback_scraper_type = run.scraper_type
         fallback_trigger = run.trigger
+        fallback_schedule_id = run.schedule_id
         payload = _parse_resume_payload(run.resume_payload)
         raw_usernames = payload.get("usernames")
         usernames = []
@@ -198,7 +199,7 @@ async def _resume_run(run_id: int) -> None:
 
     run_type = str(payload.get("type") or fallback_scraper_type or "").strip().lower()
     trigger = str(payload.get("trigger") or fallback_trigger or "manual")
-    schedule_id = payload.get("schedule_id")
+    schedule_id = payload.get("schedule_id") if payload.get("schedule_id") is not None else fallback_schedule_id
 
     if run_type == "profiles":
         await run_profiles_scrape(
