@@ -167,12 +167,23 @@ async def _resume_run(run_id: int) -> None:
         fallback_scraper_type = run.scraper_type
         fallback_trigger = run.trigger
         payload = _parse_resume_payload(run.resume_payload)
-        usernames = payload.get("usernames")
-        if not isinstance(usernames, list) or not usernames:
-            scrape_profiles_result = await db.execute(select(ScrapeProfile).order_by(ScrapeProfile.position, ScrapeProfile.id))
-            usernames = [row.username for row in scrape_profiles_result.scalars().all()]
-        else:
-            usernames = [str(username).strip() for username in usernames if str(username).strip()]
+        raw_usernames = payload.get("usernames")
+        usernames = []
+        if isinstance(raw_usernames, list):
+            usernames = [str(username).strip() for username in raw_usernames if str(username).strip()]
+        if not usernames:
+            error_message = (
+                "Unable to resume scrape run because the persisted resume payload does not contain "
+                "a valid usernames list. Refusing to fall back to all scrape profiles."
+            )
+            await _append_run_log(db, run.id, error_message)
+            await scrape_run_repo.update_run(db, run.id, {
+                "status": "failed",
+                "finished_at": datetime.now(timezone.utc),
+                "error_message": error_message,
+            })
+            await db.commit()
+            return
 
         await _append_run_log(db, run.id, "Server restarted; resuming scrape run from persisted settings.")
         await _delete_run_artifacts(db, run.id)
