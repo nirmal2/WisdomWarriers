@@ -341,7 +341,14 @@ export default function ScrapePage() {
       </div>
       <div className="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-4">
         <div>
-          <h2 className="text-sm font-semibold text-gray-200">Database Update Status</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-200">Database Update Status</h2>
+            {statusData?.resume_detected && (
+              <span className="inline-flex items-center rounded-full border border-amber-700 bg-amber-900/40 px-2 py-0.5 text-xs font-medium text-amber-200">
+                Resumed after restart
+              </span>
+            )}
+          </div>
           <p className="text-xs text-gray-400 mt-1">Rows updated for the selected run.</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

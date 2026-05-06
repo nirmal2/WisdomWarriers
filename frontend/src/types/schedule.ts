@@ -38,6 +38,7 @@ export interface ScrapeRun {
   items_fetched: number
   error_message?: string
   embedding_error_message?: string
+  resume_detected?: boolean
 }
 
 export interface ScrapeDbUpdateStatus {
@@ -51,6 +52,7 @@ export interface ScrapeStatus {
   run: ScrapeRun | null
   progress_pct: number
   db_updates: ScrapeDbUpdateStatus
+  resume_detected?: boolean
   logs: string[]
 }
 

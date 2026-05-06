@@ -48,6 +48,7 @@ export interface ScrapeStatusResponse {
   run: ScrapeRun | null
   progress_pct: number
   db_updates: ScrapeDbUpdateStatus
+  resume_detected?: boolean
   logs: string[]
 }
 

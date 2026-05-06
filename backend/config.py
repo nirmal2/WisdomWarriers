@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Scraping
     profile_scrape_parallelism: int = 6
     apify_actor_timeout_seconds: int = 900
+    resume_incomplete_scrapes_on_startup: bool = True
 
     # Supabase Storage (optional)
     supabase_url: str | None = None

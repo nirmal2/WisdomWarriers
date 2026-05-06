@@ -15,6 +15,18 @@ export function RecentRunsTable() {
         { key: "id", label: "#" },
         { key: "scraper_type", label: "Type" },
         { key: "trigger", label: "Trigger" },
+        {
+          key: "resume_detected",
+          label: "Recovery",
+          render: r =>
+            r.resume_detected ? (
+              <span className="inline-flex items-center rounded-full border border-amber-700 bg-amber-900/40 px-2 py-0.5 text-xs font-medium text-amber-200">
+                Resumed
+              </span>
+            ) : (
+              <span className="text-xs text-gray-500">-</span>
+            ),
+        },
         { key: "status", label: "Status", render: r => <StatusBadge status={r.status} /> },
         { key: "embedding_status", label: "Embeddings", render: r => <StatusBadge status={r.embedding_status} /> },
         { key: "items_fetched", label: "Items" },

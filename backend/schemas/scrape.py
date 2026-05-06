@@ -16,6 +16,7 @@ class ScrapeRunRead(BaseModel):
     items_fetched: int
     error_message: Optional[str] = None
     embedding_error_message: Optional[str] = None
+    resume_detected: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -109,6 +110,7 @@ class ScrapeStatusRead(BaseModel):
     run: Optional[ScrapeRunRead] = None
     progress_pct: int = 0
     db_updates: ScrapeDbUpdateStatus = ScrapeDbUpdateStatus()
+    resume_detected: bool = False
     logs: list[str] = []
 
 
