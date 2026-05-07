@@ -152,6 +152,17 @@ export const skipEmbedding = (runId: number): Promise<ScrapeRun> =>
     return r.json()
   })
 
+export const resumePendingPosts = (runId: number): Promise<ScrapeStartResponse> =>
+  fetch(`${API_URL}/api/scrape/runs/${runId}/resume-pending-posts`, {
+    method: "POST",
+  }).then(async r => {
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: "Failed to resume pending profiles" }))
+      throw new Error(err.detail ?? "Failed to resume pending profiles")
+    }
+    return r.json()
+  })
+
 export const fetchRunComparison = (
   runAId: number,
   runBId: number,

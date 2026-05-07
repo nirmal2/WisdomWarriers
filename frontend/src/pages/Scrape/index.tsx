@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { fetchProfilesSource, fetchRunProfileProgress, fetchScrapeStatus, triggerScrape } from "../../api/scrape"
+import { fetchProfilesSource, fetchRunProfileProgress, fetchScrapeStatus, resumePendingPosts, triggerScrape } from "../../api/scrape"
 import { RecentRunsTable } from "../Dashboard/RecentRunsTable"
 
 function parseUsernames(value: string) {
@@ -67,6 +67,8 @@ export default function ScrapePage() {
   const isScrapeBusy = isScrapeLocked || currentRunStatus === "running"
   const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
   const effectiveDaysValue = getDerivedDaysValue(newerThanValue, dateFrom)
+  const pendingProfileCount = profileProgress?.pending_count ?? pendingProfiles.length
+  const canResumePending = typeof activeRunId === "number" && currentRunStatus === "completed" && pendingProfileCount > 0 && !isScrapeBusy
 
   useEffect(() => {
     if (!statusData?.run) return
@@ -152,6 +154,24 @@ export default function ScrapePage() {
     } catch {
       setIsScrapeLocked(false)
       setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Error while starting scrape.`].slice(-120))
+    }
+  }
+
+  const handleResumePendingPosts = async () => {
+    if (!activeRunId || !canResumePending) return
+    setIsScrapeLocked(true)
+    setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Resuming pending profiles in run #${activeRunId}...`].slice(-120))
+    try {
+      const resumed = await resumePendingPosts(activeRunId)
+      setActiveRunId(resumed.run_id)
+      qc.invalidateQueries({ queryKey: ["scrape-status", resumed.run_id] })
+      qc.invalidateQueries({ queryKey: ["run-profile-progress", resumed.run_id] })
+      qc.invalidateQueries({ queryKey: ["runs"] })
+      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Pending profile scrape resumed for run #${resumed.run_id}.`].slice(-120))
+    } catch (error) {
+      setIsScrapeLocked(false)
+      const message = error instanceof Error ? error.message : "Failed to resume pending profiles"
+      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`].slice(-120))
     }
   }
 
@@ -347,6 +367,16 @@ export default function ScrapePage() {
             )}
           </div>
           <p className="text-xs text-gray-400 mt-1">Rows updated for the selected run.</p>
+          {canResumePending && (
+            <div className="mt-3">
+              <button
+                onClick={handleResumePendingPosts}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-500"
+              >
+                Scrape Pending Wisdom Warriors ({pendingProfileCount})
+              </button>
+            </div>
+          )}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">

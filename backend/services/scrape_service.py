@@ -463,6 +463,7 @@ async def run_posts_scrape(
             initial_items_fetched = 0 if run.scraper_type == "combined" else int(run.items_fetched or 0)
             await scrape_run_repo.update_run(db, run.id, {
                 "status": "running",
+                "finished_at": None,
                 "embedding_status": "pending" if enable_embeddings else "skipped",
                 "profiles_requested": len(requested_usernames),
                 "error_message": None,

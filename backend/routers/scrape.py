@@ -591,6 +591,76 @@ async def skip_embedding(run_id: int, db: AsyncSession = Depends(get_db)) -> Scr
     return run
 
 
+@router.post("/runs/{run_id}/resume-pending-posts", response_model=ScrapeStartRead)
+async def resume_pending_posts_for_run(
+    run_id: int,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> ScrapeStartRead:
+    run = await db.get(ScrapeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.scraper_type not in ("posts", "combined"):
+        raise HTTPException(status_code=409, detail="Pending-post resume is only supported for post runs")
+    if run.status == "running":
+        raise HTTPException(status_code=409, detail="Run is already in progress")
+
+    progress_rows = await get_profile_progress_rows(db, run.id)
+    pending_or_failed = [row for row in progress_rows if row.status in ("pending", "failed", "running")]
+    if not pending_or_failed:
+        raise HTTPException(status_code=409, detail="No pending profiles found for this run")
+
+    all_usernames = [row.username for row in progress_rows if row.username]
+    if not all_usernames:
+        all_usernames = [row.username for row in await list_scrape_profiles(db)]
+
+    resume_payload = {}
+    if run.resume_payload:
+        try:
+            parsed = json.loads(run.resume_payload)
+            if isinstance(parsed, dict):
+                resume_payload = parsed
+        except (json.JSONDecodeError, TypeError):
+            resume_payload = {}
+
+    results_limit = int(resume_payload.get("results_limit") or 100)
+    only_posts_newer_than = resume_payload.get("only_posts_newer_than")
+    date_from = resume_payload.get("date_from")
+    date_to = resume_payload.get("date_to")
+    frequency = str(resume_payload.get("frequency") or "on_demand")
+    data_detail_level = str(resume_payload.get("data_detail_level") or "basicData")
+    batch_mode = bool(resume_payload.get("batch_mode", False))
+    enable_embeddings = bool(resume_payload.get("enable_embeddings", True))
+    apify_token = resume_payload.get("apify_token")
+
+    background.add_task(
+        run_posts_scrape,
+        usernames=all_usernames,
+        scraper_type="posts",
+        trigger=str(run.trigger or "manual"),
+        schedule_id=run.schedule_id,
+        results_limit=results_limit,
+        only_posts_newer_than=only_posts_newer_than,
+        date_from=date_from,
+        date_to=date_to,
+        frequency=frequency,
+        data_detail_level=data_detail_level,
+        shared_scraped_at=None,
+        batch_mode=batch_mode,
+        enable_embeddings=enable_embeddings,
+        existing_run_id=run.id,
+        finalize_run=True,
+        apify_token=apify_token,
+    )
+
+    return ScrapeStartRead(
+        status="started",
+        profiles_count=len(all_usernames),
+        run_id=run.id,
+        action="resume_pending_posts",
+    )
+
+
 @router.post("/runs/{run_id}/recover-debug")
 async def recover_run_from_debug(run_id: int) -> dict:
     return await recover_posts_from_debug(run_id)
