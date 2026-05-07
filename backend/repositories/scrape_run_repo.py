@@ -2,6 +2,7 @@ from typing import Any, Optional, Sequence
 from sqlalchemy import select, func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.scrape_run import ScrapeRun
+from backend.models.scrape_run_profile_progress import ScrapeRunProfileProgress
 from datetime import datetime, timezone
 
 
@@ -55,6 +56,147 @@ async def claim_incomplete_runs_for_resume(db: AsyncSession) -> list[ScrapeRun]:
         .order_by(ScrapeRun.started_at.asc())
     )
     return result.scalars().all()
+
+
+def _normalize_username(username: str) -> str:
+    return (username or "").strip().lstrip("@").lower()
+
+
+async def initialize_profile_progress(db: AsyncSession, run_id: int, usernames: list[str]) -> None:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for username in usernames:
+        normalized = _normalize_username(username)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+
+    for username in cleaned:
+        existing = await db.execute(
+            select(ScrapeRunProfileProgress)
+            .where(ScrapeRunProfileProgress.run_id == run_id)
+            .where(ScrapeRunProfileProgress.username == username)
+            .limit(1)
+        )
+        row = existing.scalar_one_or_none()
+        if row is not None:
+            continue
+        db.add(
+            ScrapeRunProfileProgress(
+                run_id=run_id,
+                username=username,
+                status="pending",
+                attempt_count=0,
+                items_fetched=0,
+            )
+        )
+    await db.flush()
+
+
+async def mark_running_profiles_failed(db: AsyncSession, run_id: int, reason: str) -> None:
+    await db.execute(
+        update(ScrapeRunProfileProgress)
+        .where(ScrapeRunProfileProgress.run_id == run_id)
+        .where(ScrapeRunProfileProgress.status == "running")
+        .values(
+            status="failed",
+            finished_at=datetime.now(timezone.utc),
+            error_message=reason,
+            last_checkpoint_at=datetime.now(timezone.utc),
+        )
+    )
+    await db.flush()
+
+
+async def get_usernames_for_resume(db: AsyncSession, run_id: int) -> list[str]:
+    result = await db.execute(
+        select(ScrapeRunProfileProgress.username)
+        .where(ScrapeRunProfileProgress.run_id == run_id)
+        .where(ScrapeRunProfileProgress.status.in_(["pending", "failed", "running"]))
+        .order_by(ScrapeRunProfileProgress.id.asc())
+    )
+    return [row[0] for row in result.all()]
+
+
+async def get_profile_progress_rows(db: AsyncSession, run_id: int) -> list[ScrapeRunProfileProgress]:
+    result = await db.execute(
+        select(ScrapeRunProfileProgress)
+        .where(ScrapeRunProfileProgress.run_id == run_id)
+        .order_by(ScrapeRunProfileProgress.id.asc())
+    )
+    return result.scalars().all()
+
+
+async def reset_profile_progress(db: AsyncSession, run_id: int) -> None:
+    await db.execute(
+        text("DELETE FROM scrape_run_profile_progress WHERE run_id = :run_id"),
+        {"run_id": run_id},
+    )
+    await db.flush()
+
+
+async def mark_profile_running(db: AsyncSession, run_id: int, username: str) -> None:
+    normalized = _normalize_username(username)
+    now = datetime.now(timezone.utc)
+    row_result = await db.execute(
+        select(ScrapeRunProfileProgress)
+        .where(ScrapeRunProfileProgress.run_id == run_id)
+        .where(ScrapeRunProfileProgress.username == normalized)
+        .limit(1)
+    )
+    row = row_result.scalar_one_or_none()
+    if row is None:
+        row = ScrapeRunProfileProgress(run_id=run_id, username=normalized)
+        db.add(row)
+    row.status = "running"
+    row.attempt_count = int(row.attempt_count or 0) + 1
+    row.started_at = now
+    row.finished_at = None
+    row.error_message = None
+    row.last_checkpoint_at = now
+    await db.flush()
+
+
+async def mark_profile_success(db: AsyncSession, run_id: int, username: str, items_fetched: int) -> None:
+    normalized = _normalize_username(username)
+    now = datetime.now(timezone.utc)
+    row_result = await db.execute(
+        select(ScrapeRunProfileProgress)
+        .where(ScrapeRunProfileProgress.run_id == run_id)
+        .where(ScrapeRunProfileProgress.username == normalized)
+        .limit(1)
+    )
+    row = row_result.scalar_one_or_none()
+    if row is None:
+        row = ScrapeRunProfileProgress(run_id=run_id, username=normalized)
+        db.add(row)
+    row.status = "success"
+    row.items_fetched = max(0, int(items_fetched or 0))
+    row.finished_at = now
+    row.error_message = None
+    row.last_checkpoint_at = now
+    await db.flush()
+
+
+async def mark_profile_failed(db: AsyncSession, run_id: int, username: str, error_message: str) -> None:
+    normalized = _normalize_username(username)
+    now = datetime.now(timezone.utc)
+    row_result = await db.execute(
+        select(ScrapeRunProfileProgress)
+        .where(ScrapeRunProfileProgress.run_id == run_id)
+        .where(ScrapeRunProfileProgress.username == normalized)
+        .limit(1)
+    )
+    row = row_result.scalar_one_or_none()
+    if row is None:
+        row = ScrapeRunProfileProgress(run_id=run_id, username=normalized)
+        db.add(row)
+    row.status = "failed"
+    row.finished_at = now
+    row.error_message = error_message
+    row.last_checkpoint_at = now
+    await db.flush()
 
 
 async def list_runs(

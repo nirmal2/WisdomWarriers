@@ -44,10 +44,37 @@ export interface ScrapeDbUpdateStatus {
   missing_usernames: string[]
 }
 
+export interface ScrapeProfileFailure {
+  username: string
+  attempt_count: number
+  error_message?: string
+}
+
+export interface ScrapeProfileAttempt {
+  username: string
+  status: string
+  attempt_count: number
+}
+
+export interface ScrapeProfileProgress {
+  total_profiles: number
+  completed_count: number
+  pending_count: number
+  failed_count: number
+  running_count: number
+  completed_profiles: string[]
+  pending_profiles: string[]
+  failed_profiles: ScrapeProfileFailure[]
+  zero_posts_profiles: string[]
+  profile_attempts: ScrapeProfileAttempt[]
+  server_failure_message?: string
+}
+
 export interface ScrapeStatusResponse {
   run: ScrapeRun | null
   progress_pct: number
   db_updates: ScrapeDbUpdateStatus
+  profile_progress?: ScrapeProfileProgress
   resume_detected?: boolean
   logs: string[]
 }

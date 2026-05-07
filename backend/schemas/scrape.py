@@ -106,10 +106,37 @@ class ScrapeDbUpdateStatus(BaseModel):
     missing_usernames: list[str] = []
 
 
+class ScrapeProfileFailureRead(BaseModel):
+    username: str
+    attempt_count: int = 0
+    error_message: Optional[str] = None
+
+
+class ScrapeProfileAttemptRead(BaseModel):
+    username: str
+    status: str
+    attempt_count: int = 0
+
+
+class ScrapeProfileProgressRead(BaseModel):
+    total_profiles: int = 0
+    completed_count: int = 0
+    pending_count: int = 0
+    failed_count: int = 0
+    running_count: int = 0
+    completed_profiles: list[str] = []
+    pending_profiles: list[str] = []
+    failed_profiles: list[ScrapeProfileFailureRead] = []
+    zero_posts_profiles: list[str] = []
+    profile_attempts: list[ScrapeProfileAttemptRead] = []
+    server_failure_message: Optional[str] = None
+
+
 class ScrapeStatusRead(BaseModel):
     run: Optional[ScrapeRunRead] = None
     progress_pct: int = 0
     db_updates: ScrapeDbUpdateStatus = ScrapeDbUpdateStatus()
+    profile_progress: ScrapeProfileProgressRead = ScrapeProfileProgressRead()
     resume_detected: bool = False
     logs: list[str] = []
 

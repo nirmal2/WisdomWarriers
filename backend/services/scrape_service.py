@@ -34,6 +34,54 @@ from backend.services.storage import upload_display_image_to_supabase, upload_pr
 _RESUME_TASKS: set[asyncio.Task[Any]] = set()
 
 
+def _normalize_username_key(username: str) -> str:
+    return (username or "").strip().lstrip("@").lower()
+
+
+def _clean_usernames(usernames: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for username in usernames:
+        normalized = _normalize_username_key(username)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+    return cleaned
+
+
+async def _delete_posts_for_username_in_run(db, run_id: int, username: str) -> None:
+    owner_key = _normalize_username_key(username)
+    await db.execute(
+        delete(PostSnapshotTaggedUser)
+        .where(PostSnapshotTaggedUser.run_id == run_id)
+        .where(func.lower(PostSnapshotTaggedUser.owner_username) == owner_key)
+    )
+    await db.execute(
+        delete(PostSnapshotMention)
+        .where(PostSnapshotMention.run_id == run_id)
+        .where(func.lower(PostSnapshotMention.owner_username) == owner_key)
+    )
+    await db.execute(
+        delete(PostSnapshotHashtag)
+        .where(PostSnapshotHashtag.run_id == run_id)
+        .where(func.lower(PostSnapshotHashtag.owner_username) == owner_key)
+    )
+    await db.execute(
+        delete(PostSnapshot)
+        .where(PostSnapshot.run_id == run_id)
+        .where(func.lower(PostSnapshot.owner_username) == owner_key)
+    )
+
+
+async def _delete_profile_snapshot_for_run(db, run_id: int, profile_id: str) -> None:
+    await db.execute(
+        delete(ProfileSnapshot)
+        .where(ProfileSnapshot.run_id == run_id)
+        .where(ProfileSnapshot.profile_id == profile_id)
+    )
+
+
 def _track_resume_task(task: asyncio.Task[Any]) -> None:
     _RESUME_TASKS.add(task)
 
@@ -164,15 +212,17 @@ async def _resume_run(run_id: int) -> None:
         if not isinstance(usernames, list) or not usernames:
             scrape_profiles_result = await db.execute(select(ScrapeProfile).order_by(ScrapeProfile.position, ScrapeProfile.id))
             usernames = [row.username for row in scrape_profiles_result.scalars().all()]
-        else:
-            usernames = [str(username).strip() for username in usernames if str(username).strip()]
+        usernames = _clean_usernames([str(username) for username in usernames])
 
         await _append_run_log(db, run.id, "Server restarted; resuming scrape run from persisted settings.")
-        await _delete_run_artifacts(db, run.id)
+        await scrape_run_repo.mark_running_profiles_failed(
+            db,
+            run.id,
+            "Server restarted while profile was processing. Profile will be retried.",
+        )
         await scrape_run_repo.update_run(db, run.id, {
             "status": "running",
             "finished_at": None,
-            "items_fetched": 0,
             "error_message": None,
             "embedding_error_message": None,
         })
@@ -403,17 +453,21 @@ async def run_posts_scrape(
     )
     async with AsyncSessionLocal() as db:
         await _purge_ignored_instagram_account(db)
+        requested_usernames = _clean_usernames(usernames)
+        initial_items_fetched = 0
         if existing_run_id is not None:
             run = await db.get(ScrapeRun, existing_run_id)
             if run is None:
                 raise ValueError(f"Run {existing_run_id} not found")
+            initial_items_fetched = 0 if run.scraper_type == "combined" else int(run.items_fetched or 0)
             await scrape_run_repo.update_run(db, run.id, {
                 "status": "running",
                 "embedding_status": "pending" if enable_embeddings else "skipped",
-                "profiles_requested": len(usernames),
+                "profiles_requested": len(requested_usernames),
                 "error_message": None,
                 "embedding_error_message": None,
                 "resume_payload": resume_payload,
+                "items_fetched": initial_items_fetched,
             })
         else:
             run = await scrape_run_repo.create_run(db, {
@@ -421,175 +475,165 @@ async def run_posts_scrape(
                 "trigger": trigger,
                 "schedule_id": schedule_id,
                 "embedding_status": "pending" if enable_embeddings else "skipped",
-                "profiles_requested": len(usernames),
+                "profiles_requested": len(requested_usernames),
                 "resume_payload": resume_payload,
+                "items_fetched": 0,
             })
-        scraped_at = shared_scraped_at or datetime.now(timezone.utc)
+            initial_items_fetched = 0
 
+        await scrape_run_repo.initialize_profile_progress(db, run.id, requested_usernames)
+        target_usernames = await scrape_run_repo.get_usernames_for_resume(db, run.id)
+        scraped_at = shared_scraped_at or datetime.now(timezone.utc)
         period_label = derive_period_label(frequency)
-        fetched = 0
-        skipped_outside_range = 0
+        fetched = initial_items_fetched
         embedding_status = "pending" if enable_embeddings else "skipped"
         embedding_error_message: str | None = None
+
+        async def _fetch_posts_for_username(username: str):
+            return await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    partial(run_posts_actor, [username], results_limit, only_posts_newer_than, data_detail_level, apify_token),
+                ),
+                timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
+            )
+
         try:
-            await _append_run_log(db, run.id, f"Posts stage started for {len(usernames)} profile(s).")
-            await db.commit()
+            await _append_run_log(db, run.id, f"Posts stage started for {len(target_usernames)} pending profile(s).")
             if date_from or date_to:
-                requested_window = f"{date_from or 'any'} → {date_to or 'any'}"
+                requested_window = f"{date_from or 'any'} -> {date_to or 'any'}"
                 await _append_run_log(db, run.id, f"Posts stage date filter applied: {requested_window}.")
-                await db.commit()
-            await _append_run_log(db, run.id, "Posts stage: waiting for Apify actor to return results..." if batch_mode else "Posts stage: fetching post batches from Apify...")
             await db.commit()
-            
-            # Scrape either all profiles' posts in one batch or one profile at a time.
-            all_raw_items = []
-            all_raw_logs = []
-            
-            if batch_mode:
-                result = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(
-                        None,
-                        partial(run_posts_actor, usernames, results_limit, only_posts_newer_than, data_detail_level, apify_token),
-                    ),
-                    timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
-                )
-                # Handle both old (list) and new (tuple) return types for backwards compatibility
-                if isinstance(result, tuple):
-                    raw_items, raw_logs = result
-                else:
-                    raw_items = result
-                    raw_logs = []
-                all_raw_items.extend(raw_items)
-                all_raw_logs.extend(raw_logs)
-            else:
-                async def _fetch_posts_batch(username: str):
-                    return await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            None, partial(run_posts_actor, [username], results_limit, only_posts_newer_than, data_detail_level, apify_token)
-                        ),
-                        timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
-                    )
 
-                parallelism = max(1, int(get_settings().profile_scrape_parallelism))
-                semaphore = asyncio.Semaphore(parallelism)
+            for username in target_usernames:
+                await scrape_run_repo.mark_profile_running(db, run.id, username)
+                await _append_run_log(db, run.id, f"Posts stage: scraping @{username}...")
+                await db.commit()
 
-                async def _bounded_fetch(username: str):
-                    async with semaphore:
-                        return await _fetch_posts_batch(username)
-
-                tasks = [asyncio.create_task(_bounded_fetch(username)) for username in usernames]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                for username, result in zip(usernames, results):
-                    if isinstance(result, Exception):
-                        logger.warning("Posts scrape failed for %s", username, exc_info=result)
-                        continue
-                    # Handle both old (list) and new (tuple) return types for backwards compatibility
+                try:
+                    result = await _fetch_posts_for_username(username)
                     if isinstance(result, tuple):
                         raw_items, raw_logs = result
                     else:
-                        raw_items = result
-                        raw_logs = []
-                    all_raw_items.extend(raw_items)
-                    all_raw_logs.extend(raw_logs)
-            
-            raw_items = all_raw_items
-            raw_logs = all_raw_logs
-            if raw_logs:
-                await _extend_run_logs(db, run.id, raw_logs)
-                await db.commit()
+                        raw_items, raw_logs = result, []
 
-            # ── debug dump ────────────────────────────────────────────────
-            _dump_posts_debug(run.id, usernames, raw_items)
-            # ─────────────────────────────────────────────────────────────
+                    if raw_logs:
+                        await _extend_run_logs(db, run.id, raw_logs)
 
-            for raw in raw_items:
-                norm = normalize_post(raw)
-                url = norm.get("url", "")
-                if not url:
-                    continue
-                if not _is_timestamp_within_range(norm.get("timestamp"), date_from, date_to):
-                    skipped_outside_range += 1
-                    continue
-                norm["id"] = _post_id(url, period_label)
+                    await _delete_posts_for_username_in_run(db, run.id, username)
+                    profile_fetched = 0
+                    debug_items: list[dict[str, Any]] = []
 
-                display_url = norm.get("display_url")
-                if display_url:
-                    try:
-                        upload_result = await asyncio.get_event_loop().run_in_executor(
-                            None,
-                            partial(upload_display_image_to_supabase, display_url, run.id, norm["id"]),
+                    for raw in raw_items:
+                        norm = normalize_post(raw)
+                        url = norm.get("url", "")
+                        if not url:
+                            continue
+                        if not _is_timestamp_within_range(norm.get("timestamp"), date_from, date_to):
+                            continue
+
+                        owner_username = _normalize_username_key(norm.get("owner_username") or username)
+                        if owner_username != _normalize_username_key(username):
+                            continue
+
+                        norm["owner_username"] = owner_username
+                        norm["id"] = _post_id(url, period_label)
+
+                        display_url = norm.get("display_url")
+                        if display_url:
+                            try:
+                                upload_result = await asyncio.get_event_loop().run_in_executor(
+                                    None,
+                                    partial(upload_display_image_to_supabase, display_url, run.id, norm["id"]),
+                                )
+                                if upload_result:
+                                    norm["display_storage_path"] = upload_result.path
+                                    norm["display_storage_url"] = upload_result.public_url
+                            except Exception:
+                                logger.warning("Storage upload failed for post %s", norm["id"], exc_info=True)
+
+                        norm["period_label"] = period_label
+                        norm["scraped_at"] = scraped_at
+                        norm["run_id"] = run.id
+                        snap = await post_repo.insert_snapshot(db, {
+                            "post_id": norm["id"],
+                            "run_id": run.id,
+                            "owner_username": owner_username,
+                            "url": norm["url"],
+                            "timestamp": norm.get("timestamp"),
+                            "likes_count": norm.get("likes_count", 0) or 0,
+                            "video_play_count": norm.get("video_play_count", 0) or 0,
+                            "type": norm.get("type"),
+                            "video_url": norm.get("video_url"),
+                            "display_url": norm.get("display_url"),
+                            "display_storage_path": norm.get("display_storage_path"),
+                            "display_storage_url": norm.get("display_storage_url"),
+                            "caption": norm.get("caption"),
+                            "product_type": norm.get("product_type"),
+                            "input_url": norm.get("input_url"),
+                            "hashtags": norm.get("hashtags") or [],
+                            "mentions": norm.get("mentions") or [],
+                            "tagged_users": norm.get("tagged_users") or [],
+                            "coauthor_producers": norm.get("coauthor_producers") or [],
+                            "period_label": period_label,
+                            "scraped_at": scraped_at,
+                        })
+                        await post_repo.replace_snapshot_hashtags(
+                            db,
+                            snapshot_id=snap.id,
+                            post_id=norm["id"],
+                            run_id=run.id,
+                            period_label=period_label,
+                            owner_username=owner_username,
+                            hashtags=norm.get("hashtags") or [],
                         )
-                        if upload_result:
-                            norm["display_storage_path"] = upload_result.path
-                            norm["display_storage_url"] = upload_result.public_url
-                    except Exception:
-                        logger.warning("Storage upload failed for post %s", norm["id"], exc_info=True)
+                        await post_repo.replace_snapshot_mentions(
+                            db,
+                            snapshot_id=snap.id,
+                            post_id=norm["id"],
+                            run_id=run.id,
+                            period_label=period_label,
+                            owner_username=owner_username,
+                            mentions=norm.get("mentions") or [],
+                        )
+                        await post_repo.replace_snapshot_tagged_users(
+                            db,
+                            snapshot_id=snap.id,
+                            post_id=norm["id"],
+                            run_id=run.id,
+                            period_label=period_label,
+                            owner_username=owner_username,
+                            tagged_users=norm.get("tagged_users") or [],
+                        )
+                        profile_fetched += 1
+                        debug_items.append(raw)
 
-                norm["period_label"] = period_label
-                norm["scraped_at"] = scraped_at
-                norm["run_id"] = run.id
-                snap = await post_repo.insert_snapshot(db, {
-                    "post_id": norm["id"],
-                    "run_id": run.id,
-                    "owner_username": norm.get("owner_username"),
-                    "url": norm["url"],
-                    "timestamp": norm.get("timestamp"),
-                    "likes_count": norm.get("likes_count", 0) or 0,
-                    "video_play_count": norm.get("video_play_count", 0) or 0,
-                    "type": norm.get("type"),
-                    "video_url": norm.get("video_url"),
-                    "display_url": norm.get("display_url"),
-                    "display_storage_path": norm.get("display_storage_path"),
-                    "display_storage_url": norm.get("display_storage_url"),
-                    "caption": norm.get("caption"),
-                    "product_type": norm.get("product_type"),
-                    "input_url": norm.get("input_url"),
-                    "hashtags": norm.get("hashtags") or [],
-                    "mentions": norm.get("mentions") or [],
-                    "tagged_users": norm.get("tagged_users") or [],
-                    "coauthor_producers": norm.get("coauthor_producers") or [],
-                    "period_label": period_label,
-                    "scraped_at": scraped_at,
-                })
-                await post_repo.replace_snapshot_hashtags(
-                    db,
-                    snapshot_id=snap.id,
-                    post_id=norm["id"],
-                    run_id=run.id,
-                    period_label=period_label,
-                    owner_username=norm.get("owner_username"),
-                    hashtags=norm.get("hashtags") or [],
-                )
-                await post_repo.replace_snapshot_mentions(
-                    db,
-                    snapshot_id=snap.id,
-                    post_id=norm["id"],
-                    run_id=run.id,
-                    period_label=period_label,
-                    owner_username=norm.get("owner_username"),
-                    mentions=norm.get("mentions") or [],
-                )
-                await post_repo.replace_snapshot_tagged_users(
-                    db,
-                    snapshot_id=snap.id,
-                    post_id=norm["id"],
-                    run_id=run.id,
-                    period_label=period_label,
-                    owner_username=norm.get("owner_username"),
-                    tagged_users=norm.get("tagged_users") or [],
-                )
-                fetched += 1
-                await scrape_run_repo.update_run(db, run.id, {"items_fetched": fetched})
-                if fetched == 1 or fetched % 25 == 0:
-                    await _append_run_log(db, run.id, f"Posts stage: persisted {fetched} post(s) so far.")
-            await db.commit()
+                    if debug_items:
+                        _dump_posts_debug(run.id, [username], debug_items)
+
+                    fetched += profile_fetched
+                    await scrape_run_repo.mark_profile_success(db, run.id, username, profile_fetched)
+                    await scrape_run_repo.update_run(db, run.id, {"items_fetched": fetched})
+                    if profile_fetched == 0:
+                        await _append_run_log(db, run.id, f"Posts stage: @{username} scraped with 0 posts.")
+                    else:
+                        await _append_run_log(db, run.id, f"Posts stage: @{username} persisted {profile_fetched} post(s).")
+                    await db.commit()
+                except Exception as exc:
+                    logger.warning("Posts scrape failed for %s", username, exc_info=exc)
+                    await scrape_run_repo.mark_profile_failed(db, run.id, username, str(exc))
+                    await scrape_run_repo.update_run(db, run.id, {"items_fetched": fetched})
+                    await _append_run_log(db, run.id, f"Posts stage failed for @{username}: {exc}")
+                    await db.commit()
+
+            rows = await scrape_run_repo.get_profile_progress_rows(db, run.id)
+            failed_count = len([row for row in rows if row.status == "failed"])
+
             if not enable_embeddings:
                 embedding_status = "skipped"
             elif fetched == 0:
                 embedding_status = "skipped"
             else:
-                # Re-read from DB in case the user killed embeddings via the API
                 await db.refresh(run)
                 if run.embedding_status == "skipped":
                     embedding_status = "skipped"
@@ -602,17 +646,27 @@ async def run_posts_scrape(
                     except Exception as exc:
                         embedding_status = "failed"
                         embedding_error_message = str(exc)
+
             status_update = {
                 "embedding_status": embedding_status,
                 "items_fetched": fetched,
                 "embedding_error_message": embedding_error_message,
             }
             if finalize_run:
-                status_update.update({
-                    "status": "completed",
-                    "finished_at": datetime.now(timezone.utc),
-                })
-                await _append_run_log(db, run.id, "Posts stage completed.")
+                if failed_count:
+                    status_update.update({
+                        "status": "failed",
+                        "finished_at": datetime.now(timezone.utc),
+                        "error_message": f"Posts stage completed with {failed_count} failed profile(s).",
+                    })
+                    await _append_run_log(db, run.id, f"Posts stage completed with {failed_count} failed profile(s).")
+                else:
+                    status_update.update({
+                        "status": "completed",
+                        "finished_at": datetime.now(timezone.utc),
+                        "error_message": None,
+                    })
+                    await _append_run_log(db, run.id, "Posts stage completed.")
             await scrape_run_repo.update_run(db, run.id, status_update)
         except Exception as exc:
             await _append_run_log(db, run.id, f"Posts stage failed: {exc}")
@@ -624,6 +678,7 @@ async def run_posts_scrape(
                 "error_message": str(exc),
                 "embedding_error_message": embedding_error_message,
             })
+
         await db.commit()
         await _purge_ignored_instagram_account(db)
     return fetched
@@ -652,6 +707,7 @@ async def run_profiles_scrape(
     )
     async with AsyncSessionLocal() as db:
         await _purge_ignored_instagram_account(db)
+        requested_usernames = _clean_usernames(usernames)
         if existing_run_id is not None:
             run = await db.get(ScrapeRun, existing_run_id)
             if run is None:
@@ -659,7 +715,7 @@ async def run_profiles_scrape(
             await scrape_run_repo.update_run(db, run.id, {
                 "status": "running",
                 "embedding_status": "pending" if enable_embeddings else "skipped",
-                "profiles_requested": len(usernames),
+                "profiles_requested": len(requested_usernames),
                 "error_message": None,
                 "embedding_error_message": None,
                 "resume_payload": resume_payload,
@@ -670,155 +726,126 @@ async def run_profiles_scrape(
                 "trigger": trigger,
                 "schedule_id": schedule_id,
                 "embedding_status": "pending" if enable_embeddings else "skipped",
-                "profiles_requested": len(usernames),
+                "profiles_requested": len(requested_usernames),
                 "resume_payload": resume_payload,
             })
-        await _append_run_log(db, run.id, f"Profiles stage started for {len(usernames)} profile(s).")
+
+        await scrape_run_repo.initialize_profile_progress(db, run.id, requested_usernames)
+        target_usernames = await scrape_run_repo.get_usernames_for_resume(db, run.id)
+        await _append_run_log(db, run.id, f"Profiles stage started for {len(target_usernames)} pending profile(s).")
         await db.commit()
 
-        # Keep profiles and upsert in place so posts can maintain a stable FK to profiles.
-        logger.info("Starting profile upsert flow for run %d", run.id)
+        logger.info("Starting profile checkpoint upsert flow for run %d", run.id)
 
-        # Use provided timestamp or generate new one
         scraped_at = shared_scraped_at or datetime.now(timezone.utc)
-
         period_label = derive_period_label(frequency)
-        fetched = 0
+        fetched = int(run.items_fetched or 0)
         embedding_status = "pending" if enable_embeddings else "skipped"
         embedding_error_message: str | None = None
-        requested_usernames: list[str] = []
-        requested_keys: list[str] = []
-        fetched_username_keys: set[str] = set()
-        seen_requested: set[str] = set()
-        for username in usernames:
-            normalized = (username or "").strip().lstrip("@")
-            if not normalized:
-                continue
-            key = normalized.lower()
-            if key in seen_requested:
-                continue
-            seen_requested.add(key)
-            requested_keys.append(key)
-            requested_usernames.append(normalized)
-        try:
-            # Scrape either one profile at a time or all profiles in one Apify call.
-            all_raw_logs = []
-            await _append_run_log(
-                db,
-                run.id,
-                "Profiles stage: waiting for Apify actor results..." if batch_mode else "Profiles stage: fetching profile batches from Apify...",
+        missing_usernames: list[str] = []
+
+        async def _fetch_profile_batch(username: str):
+            return await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None, partial(run_profiles_actor, [username], apify_token)
+                ),
+                timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
             )
+
+        try:
+            await _append_run_log(db, run.id, "Profiles stage: fetching profile batches from Apify...")
             await db.commit()
-            if batch_mode:
-                result = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(
-                        None, partial(run_profiles_actor, usernames, apify_token)
-                    ),
-                    timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
-                )
-                if isinstance(result, tuple):
-                    profile_batches = [result]
-                else:
-                    profile_batches = [(result, [])]
-            else:
-                profile_batches = []
 
-                async def _fetch_profile_batch(username: str):
-                    return await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            None, partial(run_profiles_actor, [username], apify_token)
-                        ),
-                        timeout=max(60, int(get_settings().apify_actor_timeout_seconds)),
-                    )
+            for username in target_usernames:
+                await scrape_run_repo.mark_profile_running(db, run.id, username)
+                await _append_run_log(db, run.id, f"Profiles stage: scraping @{username}...")
+                await db.commit()
 
-                parallelism = max(1, int(get_settings().profile_scrape_parallelism))
-                semaphore = asyncio.Semaphore(parallelism)
-
-                async def _bounded_fetch(username: str):
-                    async with semaphore:
-                        return await _fetch_profile_batch(username)
-
-                tasks = [asyncio.create_task(_bounded_fetch(username)) for username in requested_usernames]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                for username, result in zip(requested_usernames, results):
-                    if isinstance(result, Exception):
-                        logger.warning("Profile scrape failed for %s", username, exc_info=result)
-                        continue
+                try:
+                    result = await _fetch_profile_batch(username)
                     if isinstance(result, tuple):
-                        profile_batches.append(result)
+                        raw_items, raw_logs = result
                     else:
-                        profile_batches.append((result, []))
+                        raw_items, raw_logs = result, []
 
-            for raw_items, raw_logs in profile_batches:
-                all_raw_logs.extend(raw_logs)
-                for raw in raw_items:
-                    norm = normalize_profile(raw)
-                    if not norm["id"] or not norm["username"]:
-                        continue
-                    fetched_username_keys.add(norm["username"].strip().lstrip("@").lower())
+                    if raw_logs:
+                        await _extend_run_logs(db, run.id, raw_logs)
 
-                    existing_profile = await db.get(Profile, norm["id"])
-                    profile_image_urls = [norm.get("profile_pic_url_hd"), norm.get("profile_pic_url")]
-                    should_upload_profile_pic = any(profile_image_urls)
-                    if existing_profile and _is_supabase_storage_url(existing_profile.profile_pic_url):
-                        # Reuse already-uploaded storage URL instead of uploading each scrape run.
-                        norm["profile_pic_url"] = existing_profile.profile_pic_url
-                        should_upload_profile_pic = False
+                    valid_profile_count = 0
+                    for raw in raw_items:
+                        norm = normalize_profile(raw)
+                        if not norm["id"] or not norm["username"]:
+                            continue
+                        if _normalize_username_key(norm["username"]) != _normalize_username_key(username):
+                            continue
 
-                    if should_upload_profile_pic:
-                        try:
-                            upload_result = await asyncio.get_event_loop().run_in_executor(
-                                None,
-                                partial(upload_profile_image_to_supabase, profile_image_urls, norm["id"]),
-                            )
-                            if upload_result:
-                                norm["profile_pic_url"] = upload_result.public_url
-                            else:
-                                logger.warning("Storage upload skipped for profile %s: no reachable image URL", norm["username"])
-                        except Exception:
-                            logger.warning("Storage upload failed for profile %s", norm["username"], exc_info=True)
+                        existing_profile = await db.get(Profile, norm["id"])
+                        profile_image_urls = [norm.get("profile_pic_url_hd"), norm.get("profile_pic_url")]
+                        should_upload_profile_pic = any(profile_image_urls)
+                        if existing_profile and _is_supabase_storage_url(existing_profile.profile_pic_url):
+                            norm["profile_pic_url"] = existing_profile.profile_pic_url
+                            should_upload_profile_pic = False
 
-                    profile = await profile_repo.upsert_profile(db, norm)
-                    await profile_repo.insert_snapshot(db, {
-                        "profile_id": profile.id,
-                        "followers_count": norm["followers_count"],
-                        "follows_count": norm["follows_count"],
-                        "posts_count": norm["posts_count"],
-                        "period_label": period_label,
-                        "run_id": run.id,
-                        "scraped_at": scraped_at,
-                    })
-                    fetched += 1
-                    await scrape_run_repo.update_run(db, run.id, {"items_fetched": fetched})
-                    if fetched == 1 or fetched % 10 == 0 or fetched == len(requested_usernames):
-                        await _append_run_log(
+                        if should_upload_profile_pic:
+                            try:
+                                upload_result = await asyncio.get_event_loop().run_in_executor(
+                                    None,
+                                    partial(upload_profile_image_to_supabase, profile_image_urls, norm["id"]),
+                                )
+                                if upload_result:
+                                    norm["profile_pic_url"] = upload_result.public_url
+                                else:
+                                    logger.warning("Storage upload skipped for profile %s: no reachable image URL", norm["username"])
+                            except Exception:
+                                logger.warning("Storage upload failed for profile %s", norm["username"], exc_info=True)
+
+                        profile = await profile_repo.upsert_profile(db, norm)
+                        await _delete_profile_snapshot_for_run(db, run.id, profile.id)
+                        await profile_repo.insert_snapshot(db, {
+                            "profile_id": profile.id,
+                            "followers_count": norm["followers_count"],
+                            "follows_count": norm["follows_count"],
+                            "posts_count": norm["posts_count"],
+                            "period_label": period_label,
+                            "run_id": run.id,
+                            "scraped_at": scraped_at,
+                        })
+                        valid_profile_count += 1
+
+                    if valid_profile_count == 0:
+                        missing_usernames.append(username)
+                        await scrape_run_repo.mark_profile_failed(
                             db,
                             run.id,
-                            f"Profiles stage: persisted {fetched}/{len(requested_usernames)} profile(s).",
+                            username,
+                            "No profile data returned from Apify for this username.",
                         )
+                        await _append_run_log(db, run.id, f"Profiles stage: no profile data for @{username}.")
+                    else:
+                        fetched += valid_profile_count
+                        await scrape_run_repo.mark_profile_success(db, run.id, username, valid_profile_count)
+                        await _append_run_log(db, run.id, f"Profiles stage: persisted @{username}.")
+
+                    await scrape_run_repo.update_run(db, run.id, {"items_fetched": fetched})
+                    await db.commit()
+                except Exception as exc:
+                    logger.warning("Profile scrape failed for %s", username, exc_info=exc)
+                    await scrape_run_repo.mark_profile_failed(db, run.id, username, str(exc))
+                    await _append_run_log(db, run.id, f"Profiles stage failed for @{username}: {exc}")
+                    await scrape_run_repo.update_run(db, run.id, {"items_fetched": fetched})
                     await db.commit()
 
-            missing_usernames = [
-                requested_usernames[index]
-                for index, key in enumerate(requested_keys)
-                if key not in fetched_username_keys
-            ]
             await scrape_run_repo.update_run(db, run.id, {"missing_usernames": json.dumps(missing_usernames)})
             await db.commit()
-            
-            # Store raw logs in the run
-            if all_raw_logs:
-                await _extend_run_logs(db, run.id, all_raw_logs)
-                await db.commit()
-                
-            await db.commit()
+
+            rows = await scrape_run_repo.get_profile_progress_rows(db, run.id)
+            failed_count = len([row for row in rows if row.status == "failed"])
+
             if not enable_embeddings:
                 embedding_status = "skipped"
             elif fetched == 0:
                 embedding_status = "skipped"
             else:
-                # Re-read from DB in case the user killed embeddings via the API
                 await db.refresh(run)
                 if run.embedding_status == "skipped":
                     embedding_status = "skipped"
@@ -831,17 +858,27 @@ async def run_profiles_scrape(
                     except Exception as exc:
                         embedding_status = "failed"
                         embedding_error_message = str(exc)
+
             status_update = {
                 "embedding_status": embedding_status,
                 "items_fetched": fetched,
                 "embedding_error_message": embedding_error_message,
             }
             if finalize_run:
-                status_update.update({
-                    "status": "completed",
-                    "finished_at": datetime.now(timezone.utc),
-                })
-                await _append_run_log(db, run.id, "Profiles stage completed.")
+                if failed_count:
+                    status_update.update({
+                        "status": "failed",
+                        "finished_at": datetime.now(timezone.utc),
+                        "error_message": f"Profiles stage completed with {failed_count} failed profile(s).",
+                    })
+                    await _append_run_log(db, run.id, f"Profiles stage completed with {failed_count} failed profile(s).")
+                else:
+                    status_update.update({
+                        "status": "completed",
+                        "finished_at": datetime.now(timezone.utc),
+                        "error_message": None,
+                    })
+                    await _append_run_log(db, run.id, "Profiles stage completed.")
             else:
                 await _append_run_log(db, run.id, "Profiles stage completed. Handing off to posts stage...")
             await scrape_run_repo.update_run(db, run.id, status_update)
@@ -920,6 +957,8 @@ async def run_combined_scrape(
 
     if combined_run_id is not None:
         async with AsyncSessionLocal() as db:
+            await scrape_run_repo.reset_profile_progress(db, combined_run_id)
+            await scrape_run_repo.update_run(db, combined_run_id, {"items_fetched": 0})
             await _append_run_log(db, combined_run_id, "Starting posts stage...")
             await db.commit()
 

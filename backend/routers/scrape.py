@@ -17,6 +17,9 @@ from backend.schemas.scrape import (
     ScrapeProfileBulkResult,
     ScrapeProfileUpdate,
     ScrapeDbUpdateStatus,
+    ScrapeProfileAttemptRead,
+    ScrapeProfileFailureRead,
+    ScrapeProfileProgressRead,
     ScrapeRequest,
     CombinedScrapeRequest,
     ScrapeStartRead,
@@ -47,6 +50,7 @@ from backend.repositories.scrape_run_repo import (
     get_profile_deltas,
     get_run_compare_summary,
     get_runs_by_ids,
+    get_profile_progress_rows,
     list_runs,
 )
 
@@ -324,9 +328,17 @@ async def get_scrape_status(
             run=None,
             progress_pct=0,
             db_updates=ScrapeDbUpdateStatus(),
+            profile_progress=ScrapeProfileProgressRead(),
             resume_detected=False,
             logs=["No scrape run found yet."],
         )
+
+    progress_rows = await get_profile_progress_rows(db, run.id)
+    completed_profiles = [row.username for row in progress_rows if row.status == "success"]
+    pending_profiles = [row.username for row in progress_rows if row.status == "pending"]
+    running_profiles = [row.username for row in progress_rows if row.status == "running"]
+    failed_profiles_rows = [row for row in progress_rows if row.status == "failed"]
+    zero_posts_profiles = [row.username for row in progress_rows if row.status == "success" and int(row.items_fetched or 0) == 0]
 
     # Use immutable snapshot rows for per-run counts so values do not drop
     # when canonical Post rows are updated by later runs.
@@ -408,8 +420,12 @@ async def get_scrape_status(
                         pass
 
     processed_count = run.items_fetched
-    if run.scraper_type == "profiles":
-        # For profile runs, missing/private users are still processed attempts.
+    if progress_rows:
+        processed_profiles = len(completed_profiles) + len(failed_profiles_rows)
+        if run.scraper_type in ("profiles", "combined", "posts"):
+            processed_count = min(run.profiles_requested, processed_profiles)
+    elif run.scraper_type == "profiles":
+        # Legacy runs without checkpoints.
         processed_count = min(run.profiles_requested, run.items_fetched + len(missing_usernames))
 
     if run.scraper_type == "combined":
@@ -490,6 +506,33 @@ async def get_scrape_status(
             profile_snapshots_rows=snapshots_rows or 0,
             profiles_touched=profiles_touched or 0,
             missing_usernames=missing_usernames,
+        ),
+        profile_progress=ScrapeProfileProgressRead(
+            total_profiles=run.profiles_requested,
+            completed_count=len(completed_profiles),
+            pending_count=len(pending_profiles),
+            failed_count=len(failed_profiles_rows),
+            running_count=len(running_profiles),
+            completed_profiles=completed_profiles,
+            pending_profiles=pending_profiles,
+            failed_profiles=[
+                ScrapeProfileFailureRead(
+                    username=row.username,
+                    attempt_count=int(row.attempt_count or 0),
+                    error_message=row.error_message,
+                )
+                for row in failed_profiles_rows
+            ],
+            zero_posts_profiles=zero_posts_profiles,
+            profile_attempts=[
+                ScrapeProfileAttemptRead(
+                    username=row.username,
+                    status=row.status,
+                    attempt_count=int(row.attempt_count or 0),
+                )
+                for row in progress_rows
+            ],
+            server_failure_message=run.error_message if run.status == "failed" else None,
         ),
         resume_detected=resume_detected,
         logs=logs,

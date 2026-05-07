@@ -52,6 +52,7 @@ export default function ScrapePage() {
   const secondPostScraperCount = statusData?.run?.scraper_type === "posts"
     ? statusData.run.items_fetched
     : (statusData?.db_updates.posts_rows ?? 0)
+  const profileProgress = statusData?.profile_progress
   const currentRunStatus = statusData?.run?.status
   const isScrapeBusy = isScrapeLocked || currentRunStatus === "running"
   const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
@@ -354,12 +355,131 @@ export default function ScrapePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
             <p className="text-xs text-gray-400">Profiles Scraped</p>
-            <p className="text-lg font-semibold mt-1">{statusData?.db_updates.profiles_touched ?? 0}</p>
+            <p className="text-lg font-semibold mt-1">{profileProgress?.completed_count ?? statusData?.db_updates.profiles_touched ?? 0}</p>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
             <p className="text-xs text-gray-400">Posts (Second Scraper)</p>
             <p className="text-lg font-semibold mt-1">{secondPostScraperCount}</p>
           </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+            <p className="text-xs text-gray-400">Profiles Pending</p>
+            <p className="text-lg font-semibold mt-1">{profileProgress?.pending_count ?? 0}</p>
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+            <p className="text-xs text-gray-400">Profiles Failed</p>
+            <p className="text-lg font-semibold mt-1">{profileProgress?.failed_count ?? 0}</p>
+          </div>
+        </div>
+        {profileProgress?.server_failure_message && (
+          <div className="rounded-lg border border-red-900 bg-red-950/30 px-3 py-2 text-sm text-red-200">
+            {profileProgress.server_failure_message}
+          </div>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-gray-400">Completed Profiles</p>
+              <p className="text-xs text-emerald-300">{profileProgress?.completed_count ?? 0}</p>
+            </div>
+            {profileProgress?.completed_profiles?.length ? (
+              <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-auto pr-1">
+                {profileProgress.completed_profiles.map(username => (
+                  <span
+                    key={username}
+                    className="rounded-full border border-emerald-900 bg-emerald-950/60 px-2 py-1 text-xs text-emerald-200"
+                  >
+                    {username}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-gray-500">No completed profiles yet.</p>
+            )}
+          </div>
+          <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-gray-400">Pending Profiles</p>
+              <p className="text-xs text-amber-300">{profileProgress?.pending_count ?? 0}</p>
+            </div>
+            {profileProgress?.pending_profiles?.length ? (
+              <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-auto pr-1">
+                {profileProgress.pending_profiles.map(username => (
+                  <span
+                    key={username}
+                    className="rounded-full border border-amber-900 bg-amber-950/60 px-2 py-1 text-xs text-amber-200"
+                  >
+                    {username}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-gray-500">No pending profiles.</p>
+            )}
+        </div>
+        </div>
+        <div className="rounded-lg border border-gray-800 bg-gray-950 p-3 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-gray-400">Failed Profiles</p>
+            <p className="text-xs text-red-300">{profileProgress?.failed_count ?? 0} failed</p>
+          </div>
+          {profileProgress?.failed_profiles?.length ? (
+            <div className="space-y-2 max-h-44 overflow-auto pr-1">
+              {profileProgress.failed_profiles.map(profile => (
+                <div
+                  key={profile.username}
+                  className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2 text-red-200">
+                    <span className="font-medium">{profile.username}</span>
+                    <span>attempts: {profile.attempt_count}</span>
+                  </div>
+                  {profile.error_message && (
+                    <p className="mt-1 text-red-300/90 break-words">{profile.error_message}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No failed profiles for this run.</p>
+          )}
+        </div>
+        <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-gray-400">Profiles With 0 Posts</p>
+            <p className="text-xs text-sky-300">{profileProgress?.zero_posts_profiles?.length ?? 0}</p>
+          </div>
+          {profileProgress?.zero_posts_profiles?.length ? (
+            <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-auto pr-1">
+              {profileProgress.zero_posts_profiles.map(username => (
+                <span
+                  key={username}
+                  className="rounded-full border border-sky-900 bg-sky-950/40 px-2 py-1 text-xs text-sky-200"
+                >
+                  {username}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-gray-500">No zero-post profiles in this run.</p>
+          )}
+        </div>
+        <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-gray-400">Attempt Tracker</p>
+            <p className="text-xs text-gray-300">{profileProgress?.profile_attempts?.length ?? 0} profiles</p>
+          </div>
+          {profileProgress?.profile_attempts?.length ? (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-44 overflow-auto pr-1">
+              {profileProgress.profile_attempts.map(item => (
+                <div key={item.username} className="rounded border border-gray-800 bg-gray-900/60 px-2 py-1.5 text-xs text-gray-200">
+                  <div className="truncate font-medium">{item.username}</div>
+                  <div className="mt-1 text-gray-400">{item.status} | attempts: {item.attempt_count}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-gray-500">Attempt data will appear after run initialization.</p>
+          )}
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
           <div className="flex items-center justify-between gap-3">
