@@ -147,11 +147,11 @@ function formatViewCount(value: number) {
 
 interface WisdomWarriorsPageProps {
   selectedSnapshotRunId?: number
+  selectedMonth?: string
 }
 
-export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarriorsPageProps) {
+export default function WisdomWarriorsPage({ selectedSnapshotRunId, selectedMonth }: WisdomWarriorsPageProps) {
   const [activeTab, setActiveTab] = useState<Tab>("Dedicated")
-  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const [draftHashtags, setDraftHashtags] = useState<string[]>(() => getStoredWisdomFilterList("hashtags", FILTER_HASHTAGS))
   const [draftMentions, setDraftMentions] = useState<string[]>(() => getStoredWisdomFilterList("mentions", FILTER_MENTIONS))
   const [draftTaggedUsers, setDraftTaggedUsers] = useState<string[]>(() => getStoredWisdomFilterList("taggedUsers", FILTER_TAGGED_USERS))
@@ -169,17 +169,18 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
   const [editing, setEditing] = useState<WisdomWarrior | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
   const [bulkMessage, setBulkMessage] = useState("")
+  const effectiveMonth = selectedMonth || new Date().toISOString().slice(0, 7)
 
   const { data: all = [], isLoading } = useWisdomWarriors()
   const isInHouse = activeTab === "In-house influencer"
   const dedicatedMonthlyViewsQuery = useWisdomWarriorsMonthlyViews({
-    month: selectedMonth,
+    month: effectiveMonth,
     applyFilters: false,
     snapshotRunId: selectedSnapshotRunId,
     category: "Dedicated",
   })
   const inHouseMonthlyViewsQuery = useWisdomWarriorsMonthlyViews({
-    month: selectedMonth,
+    month: effectiveMonth,
     applyFilters: true,
     snapshotRunId: selectedSnapshotRunId,
     category: "In-house influencer",
@@ -304,16 +305,6 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
           <p className="text-sm text-gray-400 mt-0.5">Manage influencer profiles tracked by the scraper</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <label htmlFor="month-select" className="text-xs text-gray-400">Month</label>
-            <input
-              id="month-select"
-              type="month"
-              value={selectedMonth}
-              onChange={e => setSelectedMonth(e.target.value)}
-              className="rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
-            />
-          </div>
           <button
             onClick={() => setShowModal(true)}
             className="flex items-center gap-2 rounded-lg bg-purple-700 px-3 py-1.5 text-sm text-white transition-colors hover:bg-purple-600"
@@ -332,7 +323,7 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
       </div>
 
       <div className="rounded-xl border border-purple-800/60 bg-purple-950/30 p-4">
-        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-purple-300">Total views for {selectedMonth}</p>
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-purple-300">Total views for {effectiveMonth}</p>
         <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-3xl font-semibold text-white">
@@ -390,7 +381,7 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
       )}
 
       <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4">
-        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-gray-400">{activeTab} total views for {selectedMonth}</p>
+        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-gray-400">{activeTab} total views for {effectiveMonth}</p>
         <p className="mt-2 text-2xl font-semibold text-white">
           {isMonthlyViewsLoading ? "..." : formatViewCount(currentCategoryTotalViews)}
         </p>
@@ -419,7 +410,7 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
           <div>
             <h2 className="text-sm font-semibold text-gray-200">View Count Filters</h2>
             <p className="text-xs text-gray-400 mt-1">
-              In-house monthly views only include posts from {selectedMonth} that match at least one allowed hashtag, mention, tagged user, or caption keyword.
+              In-house monthly views only include posts from {effectiveMonth} that match at least one allowed hashtag, mention, tagged user, or caption keyword.
             </p>
           </div>
           <div className="grid gap-3 lg:grid-cols-4">
@@ -582,7 +573,7 @@ export default function WisdomWarriorsPage({ selectedSnapshotRunId }: WisdomWarr
               <th className="px-4 py-3 text-left font-medium">Grade</th>
               <th className="px-4 py-3 text-left font-medium">
                 <div className="flex items-center gap-1">
-                  <span>Monthly Views ({selectedMonth})</span>
+                  <span>Monthly Views ({effectiveMonth})</span>
                   <div className="relative group">
                     <Info className="w-3.5 h-3.5 text-gray-500 cursor-help" />
                     <div className="absolute left-1/2 -translate-x-1/2 top-5 z-10 hidden group-hover:block w-72 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-xs text-gray-300 shadow-lg normal-case tracking-normal font-normal">

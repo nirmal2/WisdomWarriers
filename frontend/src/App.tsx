@@ -280,7 +280,10 @@ export default function App() {
                 />
               }
             />
-            <Route path="/wisdom-warriors" element={<WisdomWarriorsPage selectedSnapshotRunId={selectedSnapshotRunId} />} />
+            <Route
+              path="/wisdom-warriors"
+              element={<WisdomWarriorsPage selectedSnapshotRunId={selectedSnapshotRunId} selectedMonth={selectedMonth || undefined} />}
+            />
             <Route path="/scrape-instagram" element={<ScrapePage />} />
             <Route path="/scrape-instagram/hashtag-scraper" element={<ScrapePage />} />
             <Route path="/scrape-instagram/mentions-scraper" element={<ScrapePage />} />
