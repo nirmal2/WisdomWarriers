@@ -24,7 +24,7 @@ function formatViewCount(value: number) {
 export function WisdomWarriorsGradeSummaryTable({ selectedSnapshotRunId, monthLabel }: WisdomWarriorsGradeSummaryTableProps) {
   const { data: warriors = [], isLoading: isLoadingWarriors } = useWisdomWarriors()
   const { data: monthlyViews = [], isLoading: isLoadingViews } = useWisdomWarriorsMonthlyViews({
-    month: monthLabel ?? new Date().toISOString().slice(0, 7),
+    month: monthLabel ?? "",
     applyFilters: false,
     snapshotRunId: selectedSnapshotRunId,
   })
@@ -64,6 +64,9 @@ export function WisdomWarriorsGradeSummaryTable({ selectedSnapshotRunId, monthLa
     <ChartCard title="Wisdom Warriors Grade Summary">
       <p className="mb-4 text-xs text-gray-400">
         Grade-wise count of Wisdom Warriors, top 10 channels by views, and total views for {monthLabel ?? "current month"}.
+      </p>
+      <p className="mb-4 text-[11px] text-gray-500">
+        Data source: post_snapshot (run_id: {selectedSnapshotRunId ?? "N/A"})
       </p>
 
       {isLoading ? (

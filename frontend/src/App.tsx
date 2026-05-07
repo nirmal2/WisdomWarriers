@@ -203,9 +203,9 @@ export default function App() {
     if (!selectedSnapshotRun?.scraped_at) return
     const snapshotDate = formatLocalDate(selectedSnapshotRun.scraped_at)
     const snapshotMonth = snapshotDate.slice(0, 7)
-    if (!selectedMonth) setSelectedMonth(snapshotMonth)
-    if (!selectedDate) setSelectedDate(snapshotDate)
-  }, [selectedSnapshotRun?.scraped_at, selectedDate, selectedMonth])
+    setSelectedMonth(snapshotMonth)
+    setSelectedDate(snapshotDate)
+  }, [selectedSnapshotRun?.scraped_at])
 
   useEffect(() => {
     if (!selectedDate) return
