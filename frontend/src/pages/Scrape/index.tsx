@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { fetchRunProfileProgress, fetchScrapeStatus, triggerCombinedScrape, triggerScrape } from "../../api/scrape"
-import { fetchProfileUsernames } from "../../api/profiles"
+import { fetchProfilesSource, fetchRunProfileProgress, fetchScrapeStatus, triggerCombinedScrape, triggerScrape } from "../../api/scrape"
 import { RecentRunsTable } from "../Dashboard/RecentRunsTable"
 
 function parseUsernames(value: string) {
@@ -26,7 +25,7 @@ function getDerivedDaysValue(daysValue: string, dateFrom: string) {
 
 export default function ScrapePage() {
   const qc = useQueryClient()
-  const { data } = useQuery({ queryKey: ["profile-usernames"], queryFn: fetchProfileUsernames })
+  const { data } = useQuery({ queryKey: ["profiles-source"], queryFn: fetchProfilesSource })
   const [profilesText, setProfilesText] = useState("")
   const [activeRunId, setActiveRunId] = useState<number | undefined>(undefined)
   const [liveLogs, setLiveLogs] = useState<string[]>([])
