@@ -132,6 +132,24 @@ class ScrapeProfileProgressRead(BaseModel):
     server_failure_message: Optional[str] = None
 
 
+class ScrapeProfileProgressRowRead(BaseModel):
+    username: str
+    status: str
+    attempt_count: int = 0
+    items_fetched: int = 0
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    last_checkpoint_at: Optional[datetime] = None
+
+
+class ScrapeProfileProgressListResponse(BaseModel):
+    items: list[ScrapeProfileProgressRowRead]
+    total: int
+    limit: int
+    offset: int
+
+
 class ScrapeStatusRead(BaseModel):
     run: Optional[ScrapeRunRead] = None
     progress_pct: int = 0

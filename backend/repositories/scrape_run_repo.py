@@ -109,13 +109,22 @@ async def mark_running_profiles_failed(db: AsyncSession, run_id: int, reason: st
     await db.flush()
 
 
-async def get_usernames_for_resume(db: AsyncSession, run_id: int) -> list[str]:
-    result = await db.execute(
+async def get_usernames_for_resume(
+    db: AsyncSession,
+    run_id: int,
+    max_attempts: int | None = None,
+) -> list[str]:
+    q = (
         select(ScrapeRunProfileProgress.username)
         .where(ScrapeRunProfileProgress.run_id == run_id)
         .where(ScrapeRunProfileProgress.status.in_(["pending", "failed", "running"]))
-        .order_by(ScrapeRunProfileProgress.id.asc())
     )
+    if max_attempts is not None and max_attempts > 0:
+        q = q.where(
+            (ScrapeRunProfileProgress.status != "failed")
+            | (ScrapeRunProfileProgress.attempt_count < max_attempts)
+        )
+    result = await db.execute(q.order_by(ScrapeRunProfileProgress.id.asc()))
     return [row[0] for row in result.all()]
 
 
@@ -126,6 +135,25 @@ async def get_profile_progress_rows(db: AsyncSession, run_id: int) -> list[Scrap
         .order_by(ScrapeRunProfileProgress.id.asc())
     )
     return result.scalars().all()
+
+
+async def list_profile_progress_rows(
+    db: AsyncSession,
+    run_id: int,
+    status: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> tuple[Sequence[ScrapeRunProfileProgress], int]:
+    q = select(ScrapeRunProfileProgress).where(ScrapeRunProfileProgress.run_id == run_id)
+    if status:
+        q = q.where(ScrapeRunProfileProgress.status == status)
+
+    count_result = await db.execute(select(func.count()).select_from(q.subquery()))
+    total = int(count_result.scalar_one() or 0)
+    result = await db.execute(
+        q.order_by(ScrapeRunProfileProgress.id.asc()).limit(limit).offset(offset)
+    )
+    return result.scalars().all(), total
 
 
 async def reset_profile_progress(db: AsyncSession, run_id: int) -> None:

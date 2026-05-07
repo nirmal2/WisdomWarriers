@@ -19,7 +19,9 @@ from backend.schemas.scrape import (
     ScrapeDbUpdateStatus,
     ScrapeProfileAttemptRead,
     ScrapeProfileFailureRead,
+    ScrapeProfileProgressListResponse,
     ScrapeProfileProgressRead,
+    ScrapeProfileProgressRowRead,
     ScrapeRequest,
     CombinedScrapeRequest,
     ScrapeStartRead,
@@ -51,6 +53,7 @@ from backend.repositories.scrape_run_repo import (
     get_run_compare_summary,
     get_runs_by_ids,
     get_profile_progress_rows,
+    list_profile_progress_rows,
     list_runs,
 )
 
@@ -302,6 +305,39 @@ async def get_runs(
             })
         )
     return ScrapeRunListResponse(items=parsed_items, total=total)
+
+
+@router.get("/runs/{run_id}/profile-progress", response_model=ScrapeProfileProgressListResponse)
+async def get_run_profile_progress(
+    run_id: int,
+    status: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+) -> ScrapeProfileProgressListResponse:
+    run = await db.get(ScrapeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    rows, total = await list_profile_progress_rows(db, run_id, status, limit, offset)
+    return ScrapeProfileProgressListResponse(
+        items=[
+            ScrapeProfileProgressRowRead(
+                username=row.username,
+                status=row.status,
+                attempt_count=int(row.attempt_count or 0),
+                items_fetched=int(row.items_fetched or 0),
+                error_message=row.error_message,
+                started_at=row.started_at,
+                finished_at=row.finished_at,
+                last_checkpoint_at=row.last_checkpoint_at,
+            )
+            for row in rows
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/status", response_model=ScrapeStatusRead)

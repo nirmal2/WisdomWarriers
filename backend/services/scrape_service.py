@@ -452,6 +452,7 @@ async def run_posts_scrape(
         apify_token=apify_token,
     )
     async with AsyncSessionLocal() as db:
+        settings = get_settings()
         await _purge_ignored_instagram_account(db)
         requested_usernames = _clean_usernames(usernames)
         initial_items_fetched = 0
@@ -482,7 +483,11 @@ async def run_posts_scrape(
             initial_items_fetched = 0
 
         await scrape_run_repo.initialize_profile_progress(db, run.id, requested_usernames)
-        target_usernames = await scrape_run_repo.get_usernames_for_resume(db, run.id)
+        target_usernames = await scrape_run_repo.get_usernames_for_resume(
+            db,
+            run.id,
+            settings.scrape_resume_max_attempts,
+        )
         scraped_at = shared_scraped_at or datetime.now(timezone.utc)
         period_label = derive_period_label(frequency)
         fetched = initial_items_fetched
@@ -706,6 +711,7 @@ async def run_profiles_scrape(
         apify_token=apify_token,
     )
     async with AsyncSessionLocal() as db:
+        settings = get_settings()
         await _purge_ignored_instagram_account(db)
         requested_usernames = _clean_usernames(usernames)
         if existing_run_id is not None:
@@ -731,7 +737,11 @@ async def run_profiles_scrape(
             })
 
         await scrape_run_repo.initialize_profile_progress(db, run.id, requested_usernames)
-        target_usernames = await scrape_run_repo.get_usernames_for_resume(db, run.id)
+        target_usernames = await scrape_run_repo.get_usernames_for_resume(
+            db,
+            run.id,
+            settings.scrape_resume_max_attempts,
+        )
         await _append_run_log(db, run.id, f"Profiles stage started for {len(target_usernames)} pending profile(s).")
         await db.commit()
 

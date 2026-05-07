@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { fetchScrapeStatus, triggerCombinedScrape, triggerScrape } from "../../api/scrape"
+import { fetchRunProfileProgress, fetchScrapeStatus, triggerCombinedScrape, triggerScrape } from "../../api/scrape"
 import { fetchProfileUsernames } from "../../api/profiles"
 import { RecentRunsTable } from "../Dashboard/RecentRunsTable"
 
@@ -49,10 +49,22 @@ export default function ScrapePage() {
     refetchInterval: 2000,
   })
 
+  const { data: runProfileProgressData } = useQuery({
+    queryKey: ["run-profile-progress", activeRunId],
+    queryFn: () => fetchRunProfileProgress(activeRunId as number, { limit: 500, offset: 0 }),
+    enabled: typeof activeRunId === "number",
+    refetchInterval: 2000,
+  })
+
   const secondPostScraperCount = statusData?.run?.scraper_type === "posts"
     ? statusData.run.items_fetched
     : (statusData?.db_updates.posts_rows ?? 0)
   const profileProgress = statusData?.profile_progress
+  const profileRows = runProfileProgressData?.items ?? []
+  const completedProfiles = profileRows.filter(row => row.status === "success").map(row => row.username)
+  const pendingProfiles = profileRows.filter(row => row.status === "pending").map(row => row.username)
+  const failedProfiles = profileRows.filter(row => row.status === "failed")
+  const zeroPostsProfiles = profileRows.filter(row => row.status === "success" && row.items_fetched === 0).map(row => row.username)
   const currentRunStatus = statusData?.run?.status
   const isScrapeBusy = isScrapeLocked || currentRunStatus === "running"
   const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
@@ -383,7 +395,7 @@ export default function ScrapePage() {
             </div>
             {profileProgress?.completed_profiles?.length ? (
               <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-auto pr-1">
-                {profileProgress.completed_profiles.map(username => (
+                {(completedProfiles.length ? completedProfiles : (profileProgress?.completed_profiles ?? [])).map(username => (
                   <span
                     key={username}
                     className="rounded-full border border-emerald-900 bg-emerald-950/60 px-2 py-1 text-xs text-emerald-200"
@@ -403,7 +415,7 @@ export default function ScrapePage() {
             </div>
             {profileProgress?.pending_profiles?.length ? (
               <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-auto pr-1">
-                {profileProgress.pending_profiles.map(username => (
+                {(pendingProfiles.length ? pendingProfiles : (profileProgress?.pending_profiles ?? [])).map(username => (
                   <span
                     key={username}
                     className="rounded-full border border-amber-900 bg-amber-950/60 px-2 py-1 text-xs text-amber-200"
@@ -415,16 +427,16 @@ export default function ScrapePage() {
             ) : (
               <p className="mt-3 text-sm text-gray-500">No pending profiles.</p>
             )}
-        </div>
+          </div>
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-950 p-3 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-gray-400">Failed Profiles</p>
             <p className="text-xs text-red-300">{profileProgress?.failed_count ?? 0} failed</p>
           </div>
-          {profileProgress?.failed_profiles?.length ? (
+          {(failedProfiles.length ? failedProfiles.length : (profileProgress?.failed_profiles?.length ?? 0)) ? (
             <div className="space-y-2 max-h-44 overflow-auto pr-1">
-              {profileProgress.failed_profiles.map(profile => (
+              {(failedProfiles.length ? failedProfiles : (profileProgress?.failed_profiles ?? [])).map(profile => (
                 <div
                   key={profile.username}
                   className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-xs"
@@ -448,9 +460,9 @@ export default function ScrapePage() {
             <p className="text-xs text-gray-400">Profiles With 0 Posts</p>
             <p className="text-xs text-sky-300">{profileProgress?.zero_posts_profiles?.length ?? 0}</p>
           </div>
-          {profileProgress?.zero_posts_profiles?.length ? (
+          {(zeroPostsProfiles.length ? zeroPostsProfiles.length : (profileProgress?.zero_posts_profiles?.length ?? 0)) ? (
             <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-auto pr-1">
-              {profileProgress.zero_posts_profiles.map(username => (
+              {(zeroPostsProfiles.length ? zeroPostsProfiles : (profileProgress?.zero_posts_profiles ?? [])).map(username => (
                 <span
                   key={username}
                   className="rounded-full border border-sky-900 bg-sky-950/40 px-2 py-1 text-xs text-sky-200"
@@ -466,11 +478,14 @@ export default function ScrapePage() {
         <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-gray-400">Attempt Tracker</p>
-            <p className="text-xs text-gray-300">{profileProgress?.profile_attempts?.length ?? 0} profiles</p>
+            <p className="text-xs text-gray-300">{profileRows.length || profileProgress?.profile_attempts?.length || 0} profiles</p>
           </div>
-          {profileProgress?.profile_attempts?.length ? (
+          {(profileRows.length || profileProgress?.profile_attempts?.length) ? (
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-44 overflow-auto pr-1">
-              {profileProgress.profile_attempts.map(item => (
+              {(profileRows.length
+                ? profileRows.map(row => ({ username: row.username, status: row.status, attempt_count: row.attempt_count }))
+                : (profileProgress?.profile_attempts ?? [])
+              ).map(item => (
                 <div key={item.username} className="rounded border border-gray-800 bg-gray-900/60 px-2 py-1.5 text-xs text-gray-200">
                   <div className="truncate font-medium">{item.username}</div>
                   <div className="mt-1 text-gray-400">{item.status} | attempts: {item.attempt_count}</div>

@@ -56,6 +56,24 @@ export interface ScrapeProfileAttempt {
   attempt_count: number
 }
 
+export interface ScrapeProfileProgressRow {
+  username: string
+  status: string
+  attempt_count: number
+  items_fetched: number
+  error_message?: string
+  started_at?: string
+  finished_at?: string
+  last_checkpoint_at?: string
+}
+
+export interface ScrapeProfileProgressListResponse {
+  items: ScrapeProfileProgressRow[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export interface ScrapeProfileProgress {
   total_profiles: number
   completed_count: number
@@ -115,6 +133,17 @@ export const fetchScrapeStatus = (runId?: number): Promise<ScrapeStatusResponse>
   const qs = new URLSearchParams()
   if (runId !== undefined) qs.set("run_id", String(runId))
   return fetch(`${API_URL}/api/scrape/status?${qs}`).then(r => r.json())
+}
+
+export const fetchRunProfileProgress = (
+  runId: number,
+  params: Record<string, string | number | undefined> = {},
+): Promise<ScrapeProfileProgressListResponse> => {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v))
+  }
+  return fetch(`${API_URL}/api/scrape/runs/${runId}/profile-progress?${qs.toString()}`).then(r => r.json())
 }
 
 export const skipEmbedding = (runId: number): Promise<ScrapeRun> =>
