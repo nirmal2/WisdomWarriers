@@ -16,6 +16,15 @@ import WisdomWarriorsPage from "./pages/WisdomWarriors"
 import { fetchScrapeStatus } from "./api/scrape"
 import { fetchWisdomWarriorsSnapshotRuns, type WisdomWarriorSnapshotRun } from "./api/wisdomWarriors"
 
+const formatLocalDate = (value: string): string => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
 const NAV = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard", end: true },
   { to: "/wisdom-warriors", icon: Swords, label: "Wisdom Warriors" },
@@ -164,6 +173,8 @@ function Sidebar() {
 
 export default function App() {
   const [selectedSnapshotRunId, setSelectedSnapshotRunId] = useState<number | undefined>(undefined)
+  const [selectedMonth, setSelectedMonth] = useState("")
+  const [selectedDate, setSelectedDate] = useState("")
 
   const { data: scrapeStatus } = useQuery({
     queryKey: ["global-last-scrape"],
@@ -188,6 +199,22 @@ export default function App() {
     [snapshotRuns, selectedSnapshotRunId]
   )
 
+  useEffect(() => {
+    if (!selectedSnapshotRun?.scraped_at) return
+    const snapshotDate = formatLocalDate(selectedSnapshotRun.scraped_at)
+    const snapshotMonth = snapshotDate.slice(0, 7)
+    if (!selectedMonth) setSelectedMonth(snapshotMonth)
+    if (!selectedDate) setSelectedDate(snapshotDate)
+  }, [selectedSnapshotRun?.scraped_at, selectedDate, selectedMonth])
+
+  useEffect(() => {
+    if (!selectedDate) return
+    const firstRunOnDate = snapshotRuns.find(run => formatLocalDate(run.scraped_at) === selectedDate)
+    if (firstRunOnDate && firstRunOnDate.run_id !== selectedSnapshotRunId) {
+      setSelectedSnapshotRunId(firstRunOnDate.run_id)
+    }
+  }, [selectedDate, selectedSnapshotRunId, snapshotRuns])
+
   const lastScrapedAt = scrapeStatus?.run?.finished_at ?? scrapeStatus?.run?.started_at
   const fallbackLastScrapedLabel = lastScrapedAt
     ? new Date(lastScrapedAt).toLocaleString()
@@ -203,7 +230,7 @@ export default function App() {
         <Sidebar />
         <main className="flex-1 overflow-y-auto pr-4 md:pr-6 lg:pr-8">
           <div className="sticky top-0 z-10 border-b border-gray-800 bg-gray-950/95 backdrop-blur px-4 py-2 text-xs text-gray-300">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label htmlFor="global-scraped-at" className="text-gray-300">Last scraped at:</label>
               <select
                 id="global-scraped-at"
@@ -222,6 +249,24 @@ export default function App() {
                   </option>
                 ))}
               </select>
+
+              <label htmlFor="global-month-filter" className="ml-1 text-gray-300">Month:</label>
+              <input
+                id="global-month-filter"
+                type="month"
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value)}
+                className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100"
+              />
+
+              <label htmlFor="global-date-filter" className="ml-1 text-gray-300">Date:</label>
+              <input
+                id="global-date-filter"
+                type="date"
+                value={selectedDate}
+                onChange={e => setSelectedDate(e.target.value)}
+                className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100"
+              />
             </div>
           </div>
           <Routes>
@@ -231,6 +276,7 @@ export default function App() {
                 <DashboardPage
                   selectedSnapshotRunId={selectedSnapshotRunId}
                   selectedScrapedAt={selectedSnapshotRun?.scraped_at}
+                  selectedMonth={selectedMonth || undefined}
                 />
               }
             />

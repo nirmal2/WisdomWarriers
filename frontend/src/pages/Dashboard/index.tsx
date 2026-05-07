@@ -13,6 +13,7 @@ import { PostVolumeChart } from "../Analytics/PostVolumeChart"
 interface DashboardProps {
   selectedSnapshotRunId?: number
   selectedScrapedAt?: string
+  selectedMonth?: string
 }
 
 const toPeriodLabel = (scrapedAt?: string): string | undefined => {
@@ -22,8 +23,8 @@ const toPeriodLabel = (scrapedAt?: string): string | undefined => {
   return date.toISOString().slice(0, 7)
 }
 
-export default function Dashboard({ selectedSnapshotRunId, selectedScrapedAt }: DashboardProps) {
-  const periodLabel = toPeriodLabel(selectedScrapedAt)
+export default function Dashboard({ selectedSnapshotRunId, selectedScrapedAt, selectedMonth }: DashboardProps) {
+  const periodLabel = selectedMonth || toPeriodLabel(selectedScrapedAt)
 
   return (
     <div className="space-y-6">
@@ -31,6 +32,10 @@ export default function Dashboard({ selectedSnapshotRunId, selectedScrapedAt }: 
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <p className="text-sm text-gray-400 mt-1">View-backed analytics across account performance, hashtag lift, posting times, run health, and semantic post discovery.</p>
       </div>
+      <WisdomWarriorsGradeSummaryTable
+        selectedSnapshotRunId={selectedSnapshotRunId}
+        monthLabel={periodLabel}
+      />
       <KpiSection periodLabel={periodLabel} />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 grid grid-cols-1 gap-4">
@@ -59,10 +64,6 @@ export default function Dashboard({ selectedSnapshotRunId, selectedScrapedAt }: 
           <SemanticPostSearch />
         </div>
       </div>
-      <WisdomWarriorsGradeSummaryTable
-        selectedSnapshotRunId={selectedSnapshotRunId}
-        monthLabel={periodLabel}
-      />
     </div>
   )
 }
