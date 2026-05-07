@@ -6,6 +6,7 @@ import { HashtagPerformanceCard } from "./HashtagPerformanceCard"
 import { PostingTimeHeatmap } from "./PostingTimeHeatmap"
 import { ScrapeRunSummaryTable } from "./ScrapeRunSummaryTable"
 import { SemanticPostSearch } from "./SemanticPostSearch"
+import { WisdomWarriorsGradeSummaryTable } from "./WisdomWarriorsGradeSummaryTable"
 import { FollowerGrowthChart } from "../Analytics/FollowerGrowthChart"
 import { PostVolumeChart } from "../Analytics/PostVolumeChart"
 
@@ -58,6 +59,10 @@ export default function Dashboard({ selectedSnapshotRunId, selectedScrapedAt }: 
           <SemanticPostSearch />
         </div>
       </div>
+      <WisdomWarriorsGradeSummaryTable
+        selectedSnapshotRunId={selectedSnapshotRunId}
+        monthLabel={periodLabel}
+      />
     </div>
   )
 }
