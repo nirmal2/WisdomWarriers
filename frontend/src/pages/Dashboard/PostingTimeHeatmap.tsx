@@ -7,7 +7,6 @@ const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
 const formatHour = (hour: number) => `${String(hour).padStart(2, "0")}:00`
 
-export function PostingTimeHeatmap() {
 interface PostingTimeHeatmapProps {
   periodLabel?: string
 }
