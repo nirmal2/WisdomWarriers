@@ -105,6 +105,10 @@ export default function Dashboard({ selectedSnapshotRunId, selectedScrapedAt, se
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <p className="text-sm text-gray-400 mt-1">View-backed analytics across account performance, hashtag lift, posting times, run health, and semantic post discovery.</p>
       </div>
+      <WisdomWarriorsGradeSummaryTable
+        selectedSnapshotRunId={selectedSnapshotRunId}
+        monthLabel={periodLabel}
+      />
       <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">Widget Visibility</p>
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -123,10 +127,6 @@ export default function Dashboard({ selectedSnapshotRunId, selectedScrapedAt, se
           ))}
         </div>
       </div>
-      <WisdomWarriorsGradeSummaryTable
-        selectedSnapshotRunId={selectedSnapshotRunId}
-        monthLabel={periodLabel}
-      />
       {isOn("kpiSection") && <KpiSection periodLabel={periodLabel} />}
 
       {(showTrends || showTopProfiles) && (
