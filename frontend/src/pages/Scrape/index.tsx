@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { fetchProfilesSource, fetchRunProfileProgress, fetchScrapeStatus, triggerCombinedScrape, triggerScrape } from "../../api/scrape"
+import { fetchProfilesSource, fetchRunProfileProgress, fetchScrapeStatus, triggerScrape } from "../../api/scrape"
 import { RecentRunsTable } from "../Dashboard/RecentRunsTable"
 
 function parseUsernames(value: string) {
@@ -35,7 +35,6 @@ export default function ScrapePage() {
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
   const [dataDetailLevel, setDataDetailLevel] = useState<"basicData" | "detailedData">("basicData")
-  const [includeProfileScrape, setIncludeProfileScrape] = useState(false)
   const [batchMode, setBatchMode] = useState(true)
   const [enableEmbeddings, setEnableEmbeddings] = useState(true)
   const [apifyToken, setApifyToken] = useState("")
@@ -118,15 +117,15 @@ export default function ScrapePage() {
     if (isScrapeBusy || usernames.length === 0 || hasInvalidDateRange) return
 
     const startedAt = new Date().toLocaleTimeString()
-    const modeLabel = includeProfileScrape ? "combined scrape" : "posts-only scrape"
     setIsScrapeLocked(true)
     setLiveLogs([
-      `[${startedAt}] Starting ${modeLabel}...`,
+      `[${startedAt}] Starting posts scrape...`,
       `[${startedAt}] Submitting ${usernames.length} profile(s) for scraping...`,
     ])
     try {
-      const req: Parameters<typeof triggerCombinedScrape>[0] = {
+      const req: Parameters<typeof triggerScrape>[0] = {
         usernames: usernames,
+        scraper_type: "posts",
         batch_mode: batchMode,
         results_limit: resultsLimit,
         data_detail_level: dataDetailLevel,
@@ -144,9 +143,7 @@ export default function ScrapePage() {
       if (apifyToken.trim()) {
         req.apify_token = apifyToken.trim()
       }
-      const started = includeProfileScrape
-        ? await triggerCombinedScrape(req)
-        : await triggerScrape({ ...req, scraper_type: "posts" })
+      const started = await triggerScrape(req)
       setActiveRunId(started.run_id)
       setShowPostsModal(false)
       setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Tracking run #${started.run_id}.`].slice(-120))
@@ -171,7 +168,7 @@ export default function ScrapePage() {
           <div className="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-900 p-6 shadow-2xl space-y-5">
             <div>
               <h2 className="text-base font-semibold text-gray-100">Scrape Wisdom Warriors</h2>
-              <p className="text-xs text-gray-400 mt-1">Configure the post scrape. Profile scraping is optional and is off by default.</p>
+              <p className="text-xs text-gray-400 mt-1">Configure the posts scraper that fetches posts for each listed profile.</p>
             </div>
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -263,18 +260,6 @@ export default function ScrapePage() {
                   This value is stored only in this browser for Admin convenience and is used for manual Wisdom Warriors scrapes.
                 </p>
               </div>
-              <label className="flex items-start gap-3 rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={includeProfileScrape}
-                  onChange={e => setIncludeProfileScrape(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-gray-600 accent-fuchsia-500"
-                />
-                <span className="space-y-1">
-                  <span className="block text-xs font-medium text-gray-300">Scrape profiles before posts</span>
-                  <span className="block text-xs text-gray-500">Optional. Leave this off for a faster posts-only scrape.</span>
-                </span>
-              </label>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-gray-300">Post scraping mode</label>
                 <select
@@ -337,7 +322,7 @@ export default function ScrapePage() {
           <span>
             {isScrapeBusy
               ? "Scrape in progress. The button will re-enable after the selected stages finish and the database updates complete."
-              : "The listed usernames are used for manual scrapes, and profile scraping can be turned on in the popup if needed."}
+              : "The listed usernames are used by the posts scraper to fetch posts per profile."}
           </span>
           <span>Removes duplicates automatically.</span>
         </div>
@@ -365,11 +350,11 @@ export default function ScrapePage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
-            <p className="text-xs text-gray-400">Profiles Scraped</p>
+            <p className="text-xs text-gray-400">Profiles Processed (Post Scraper)</p>
             <p className="text-lg font-semibold mt-1">{profileProgress?.completed_count ?? statusData?.db_updates.profiles_touched ?? 0}</p>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
-            <p className="text-xs text-gray-400">Posts (Second Scraper)</p>
+            <p className="text-xs text-gray-400">Posts Scraped</p>
             <p className="text-lg font-semibold mt-1">{secondPostScraperCount}</p>
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
@@ -383,13 +368,13 @@ export default function ScrapePage() {
         </div>
         {profileProgress?.server_failure_message && (
           <div className="rounded-lg border border-red-900 bg-red-950/30 px-3 py-2 text-sm text-red-200">
-            {profileProgress.server_failure_message}
+            {profileProgress.server_failure_message.replace("scrape", "post scrape")}
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-gray-400">Completed Profiles</p>
+              <p className="text-xs text-gray-400">Completed Profiles (Posts Fetched)</p>
               <p className="text-xs text-emerald-300">{profileProgress?.completed_count ?? 0}</p>
             </div>
             {profileProgress?.completed_profiles?.length ? (
@@ -409,7 +394,7 @@ export default function ScrapePage() {
           </div>
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-gray-400">Pending Profiles</p>
+              <p className="text-xs text-gray-400">Pending Profiles (Post Scraper)</p>
               <p className="text-xs text-amber-300">{profileProgress?.pending_count ?? 0}</p>
             </div>
             {profileProgress?.pending_profiles?.length ? (
@@ -430,7 +415,7 @@ export default function ScrapePage() {
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-950 p-3 space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-gray-400">Failed Profiles</p>
+            <p className="text-xs text-gray-400">Failed Profiles (Post Scraper)</p>
             <p className="text-xs text-red-300">{profileProgress?.failed_count ?? 0} failed</p>
           </div>
           {(failedProfiles.length ? failedProfiles.length : (profileProgress?.failed_profiles?.length ?? 0)) ? (
@@ -476,7 +461,7 @@ export default function ScrapePage() {
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-gray-400">Attempt Tracker</p>
+            <p className="text-xs text-gray-400">Post Scraper Attempt Tracker</p>
             <p className="text-xs text-gray-300">{profileRows.length || profileProgress?.profile_attempts?.length || 0} profiles</p>
           </div>
           {(profileRows.length || profileProgress?.profile_attempts?.length) ? (
@@ -497,7 +482,7 @@ export default function ScrapePage() {
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-gray-400">Missing Profiles</p>
+            <p className="text-xs text-gray-400">Profiles Missing in Post Results</p>
             <p className="text-xs text-red-300">{statusData?.db_updates.missing_usernames?.length ?? 0} missing</p>
           </div>
           {statusData?.db_updates.missing_usernames?.length ? (
