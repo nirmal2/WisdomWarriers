@@ -3,8 +3,12 @@ import { DataTable } from "../../components/DataTable"
 import { useAccountSummary } from "../../hooks/useAnalytics"
 import type { AccountSummary } from "../../types/analytics"
 
-export function AccountSummaryTable() {
-  const { data, isLoading } = useAccountSummary(undefined, 10)
+interface AccountSummaryTableProps {
+  periodLabel?: string
+}
+
+export function AccountSummaryTable({ periodLabel }: AccountSummaryTableProps) {
+  const { data, isLoading } = useAccountSummary(periodLabel, 10)
   const rows = data ?? []
 
   return (

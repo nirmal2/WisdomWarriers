@@ -1,8 +1,12 @@
 import { useOverview } from "../../hooks/useAnalytics"
 import { KpiCard } from "../../components/KpiCard"
 
-export function KpiSection() {
-  const { data } = useOverview()
+interface KpiSectionProps {
+  periodLabel?: string
+}
+
+export function KpiSection({ periodLabel }: KpiSectionProps) {
+  const { data } = useOverview(periodLabel)
   if (!data) return null
   return (
     <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">

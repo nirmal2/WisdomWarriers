@@ -27,11 +27,11 @@ const buildQueryString = (params: Record<string, string | number | undefined>) =
   return query ? `?${query}` : ""
 }
 
-export const fetchOverview = (): Promise<OverviewStats> =>
-  fetch(`${API_URL}/api/analytics/overview`).then(r => r.json())
+export const fetchOverview = (periodLabel?: string): Promise<OverviewStats> =>
+  fetch(`${API_URL}/api/analytics/overview${buildQueryString({ period_label: periodLabel })}`).then(r => r.json())
 
-export const fetchFollowerGrowth = (username?: string): Promise<TimeSeriesPoint[]> =>
-  fetch(`${API_URL}/api/analytics/follower-growth${username ? `?username=${username}` : ""}`).then(r => r.json())
+export const fetchFollowerGrowth = (username?: string, upToPeriodLabel?: string): Promise<TimeSeriesPoint[]> =>
+  fetch(`${API_URL}/api/analytics/follower-growth${buildQueryString({ username, up_to_period_label: upToPeriodLabel })}`).then(r => r.json())
 
 export const fetchTopProfiles = (metric = "followers_count", limit = 10): Promise<TopProfile[]> =>
   fetch(`${API_URL}/api/analytics/top-profiles?metric=${metric}&limit=${limit}`).then(r => r.json())
@@ -42,8 +42,8 @@ export const fetchHashtagFrequency = (limit = 20): Promise<HashtagFrequency[]> =
 export const fetchEngagement = (): Promise<EngagementByProfile[]> =>
   fetch(`${API_URL}/api/analytics/engagement-by-profile`).then(r => r.json())
 
-export const fetchPostVolume = (): Promise<PostVolume[]> =>
-  fetch(`${API_URL}/api/analytics/post-trends`).then(r => r.json())
+export const fetchPostVolume = (upToPeriodLabel?: string): Promise<PostVolume[]> =>
+  fetch(`${API_URL}/api/analytics/post-trends${buildQueryString({ up_to_period_label: upToPeriodLabel })}`).then(r => r.json())
 
 export const fetchAccountSummary = (periodLabel?: string, limit = 12): Promise<AccountSummary[]> =>
   fetch(`${API_URL}/api/analytics/account-summary${buildQueryString({ period_label: periodLabel, limit })}`).then(r => r.json())
@@ -54,11 +54,11 @@ export const fetchGradeBenchmarks = (periodLabel?: string): Promise<GradeBenchma
 export const fetchHashtagPerformance = (periodLabel?: string, username?: string, limit = 12): Promise<HashtagPerformance[]> =>
   fetch(`${API_URL}/api/analytics/hashtag-performance${buildQueryString({ period_label: periodLabel, username, limit })}`).then(r => r.json())
 
-export const fetchPostingTimeHeatmap = (username?: string): Promise<PostingTimeHeatmapPoint[]> =>
-  fetch(`${API_URL}/api/analytics/posting-time-heatmap${buildQueryString({ username })}`).then(r => r.json())
+export const fetchPostingTimeHeatmap = (username?: string, periodLabel?: string): Promise<PostingTimeHeatmapPoint[]> =>
+  fetch(`${API_URL}/api/analytics/posting-time-heatmap${buildQueryString({ username, period_label: periodLabel })}`).then(r => r.json())
 
-export const fetchScrapeRunSummary = (limit = 8): Promise<ScrapeRunSummary[]> =>
-  fetch(`${API_URL}/api/analytics/scrape-run-summary${buildQueryString({ limit })}`).then(r => r.json())
+export const fetchScrapeRunSummary = (limit = 8, maxRunId?: number): Promise<ScrapeRunSummary[]> =>
+  fetch(`${API_URL}/api/analytics/scrape-run-summary${buildQueryString({ limit, max_run_id: maxRunId })}`).then(r => r.json())
 
 export const fetchSemanticPostSearch = (query: string, username?: string, limit = 8): Promise<SemanticPostResult[]> =>
   fetch(`${API_URL}/api/analytics/semantic-post-search${buildQueryString({ query, username, limit })}`).then(async r => {

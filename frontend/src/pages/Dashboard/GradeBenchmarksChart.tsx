@@ -2,8 +2,12 @@ import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { ChartCard } from "../../components/ChartCard"
 import { useGradeBenchmarks } from "../../hooks/useAnalytics"
 
-export function GradeBenchmarksChart() {
-  const { data } = useGradeBenchmarks()
+interface GradeBenchmarksChartProps {
+  periodLabel?: string
+}
+
+export function GradeBenchmarksChart({ periodLabel }: GradeBenchmarksChartProps) {
+  const { data } = useGradeBenchmarks(periodLabel)
   const chartData = (data ?? []).map(item => ({
     ...item,
     label: item.category ? `${item.grade} · ${item.category}` : item.grade,

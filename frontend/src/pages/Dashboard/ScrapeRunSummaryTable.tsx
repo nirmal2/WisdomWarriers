@@ -10,8 +10,12 @@ const formatDuration = (durationSeconds: number | null) => {
   return formatDistanceStrict(0, durationSeconds * 1000)
 }
 
-export function ScrapeRunSummaryTable() {
-  const { data } = useScrapeRunSummary(8)
+interface ScrapeRunSummaryTableProps {
+  maxRunId?: number
+}
+
+export function ScrapeRunSummaryTable({ maxRunId }: ScrapeRunSummaryTableProps) {
+  const { data } = useScrapeRunSummary(8, maxRunId)
 
   return (
     <ChartCard title="Scrape Run Summary">

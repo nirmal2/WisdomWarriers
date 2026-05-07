@@ -2,8 +2,12 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 import { ChartCard } from "../../components/ChartCard"
 import { usePostVolume } from "../../hooks/useAnalytics"
 
-export function PostVolumeChart() {
-  const { data } = usePostVolume()
+interface PostVolumeChartProps {
+  upToPeriodLabel?: string
+}
+
+export function PostVolumeChart({ upToPeriodLabel }: PostVolumeChartProps) {
+  const { data } = usePostVolume(upToPeriodLabel)
   return (
     <ChartCard title="Posts Per Period">
       <ResponsiveContainer width="100%" height={240}>

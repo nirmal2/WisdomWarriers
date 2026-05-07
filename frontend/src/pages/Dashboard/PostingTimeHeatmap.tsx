@@ -8,7 +8,12 @@ const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const formatHour = (hour: number) => `${String(hour).padStart(2, "0")}:00`
 
 export function PostingTimeHeatmap() {
-  const { data } = usePostingTimeHeatmap()
+interface PostingTimeHeatmapProps {
+  periodLabel?: string
+}
+
+export function PostingTimeHeatmap({ periodLabel }: PostingTimeHeatmapProps) {
+  const { data } = usePostingTimeHeatmap(undefined, periodLabel)
   const cells = data ?? []
   const maxEngagement = Math.max(...cells.map(cell => Number(cell.avg_engagement_rate ?? 0)), 0)
 

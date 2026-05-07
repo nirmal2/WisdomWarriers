@@ -7,10 +7,11 @@ import {
   fetchPostEngagementHistory,
 } from "../api/analytics"
 
-export const useOverview = () => useQuery({ queryKey: ["analytics", "overview"], queryFn: fetchOverview })
+export const useOverview = (periodLabel?: string) =>
+  useQuery({ queryKey: ["analytics", "overview", periodLabel], queryFn: () => fetchOverview(periodLabel) })
 
-export const useFollowerGrowth = (username?: string) =>
-  useQuery({ queryKey: ["analytics", "follower-growth", username], queryFn: () => fetchFollowerGrowth(username) })
+export const useFollowerGrowth = (username?: string, upToPeriodLabel?: string) =>
+  useQuery({ queryKey: ["analytics", "follower-growth", username, upToPeriodLabel], queryFn: () => fetchFollowerGrowth(username, upToPeriodLabel) })
 
 export const useTopProfiles = (metric = "followers_count", limit = 10) =>
   useQuery({ queryKey: ["analytics", "top-profiles", metric, limit], queryFn: () => fetchTopProfiles(metric, limit) })
@@ -21,8 +22,8 @@ export const useHashtagFrequency = (limit = 20) =>
 export const useEngagement = () =>
   useQuery({ queryKey: ["analytics", "engagement"], queryFn: fetchEngagement })
 
-export const usePostVolume = () =>
-  useQuery({ queryKey: ["analytics", "post-volume"], queryFn: fetchPostVolume })
+export const usePostVolume = (upToPeriodLabel?: string) =>
+  useQuery({ queryKey: ["analytics", "post-volume", upToPeriodLabel], queryFn: () => fetchPostVolume(upToPeriodLabel) })
 
 export const useAccountSummary = (periodLabel?: string, limit = 12) =>
   useQuery({ queryKey: ["analytics", "account-summary", periodLabel, limit], queryFn: () => fetchAccountSummary(periodLabel, limit) })
@@ -33,11 +34,11 @@ export const useGradeBenchmarks = (periodLabel?: string) =>
 export const useHashtagPerformance = (periodLabel?: string, username?: string, limit = 12) =>
   useQuery({ queryKey: ["analytics", "hashtag-performance", periodLabel, username, limit], queryFn: () => fetchHashtagPerformance(periodLabel, username, limit) })
 
-export const usePostingTimeHeatmap = (username?: string) =>
-  useQuery({ queryKey: ["analytics", "posting-time-heatmap", username], queryFn: () => fetchPostingTimeHeatmap(username) })
+export const usePostingTimeHeatmap = (username?: string, periodLabel?: string) =>
+  useQuery({ queryKey: ["analytics", "posting-time-heatmap", username, periodLabel], queryFn: () => fetchPostingTimeHeatmap(username, periodLabel) })
 
-export const useScrapeRunSummary = (limit = 8) =>
-  useQuery({ queryKey: ["analytics", "scrape-run-summary", limit], queryFn: () => fetchScrapeRunSummary(limit) })
+export const useScrapeRunSummary = (limit = 8, maxRunId?: number) =>
+  useQuery({ queryKey: ["analytics", "scrape-run-summary", limit, maxRunId], queryFn: () => fetchScrapeRunSummary(limit, maxRunId) })
 
 export const useSemanticPostSearch = (query: string, username?: string, limit = 8) =>
   useQuery({

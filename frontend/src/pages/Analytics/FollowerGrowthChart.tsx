@@ -2,8 +2,12 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "rec
 import { ChartCard } from "../../components/ChartCard"
 import { useFollowerGrowth } from "../../hooks/useAnalytics"
 
-export function FollowerGrowthChart() {
-  const { data } = useFollowerGrowth()
+interface FollowerGrowthChartProps {
+  upToPeriodLabel?: string
+}
+
+export function FollowerGrowthChart({ upToPeriodLabel }: FollowerGrowthChartProps) {
+  const { data } = useFollowerGrowth(undefined, upToPeriodLabel)
   return (
     <ChartCard title="Total Follower Growth">
       <ResponsiveContainer width="100%" height={240}>

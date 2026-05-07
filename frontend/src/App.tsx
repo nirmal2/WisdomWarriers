@@ -225,7 +225,15 @@ export default function App() {
             </div>
           </div>
           <Routes>
-            <Route path="/" element={<DashboardPage />} />
+            <Route
+              path="/"
+              element={
+                <DashboardPage
+                  selectedSnapshotRunId={selectedSnapshotRunId}
+                  selectedScrapedAt={selectedSnapshotRun?.scraped_at}
+                />
+              }
+            />
             <Route path="/wisdom-warriors" element={<WisdomWarriorsPage selectedSnapshotRunId={selectedSnapshotRunId} />} />
             <Route path="/scrape-instagram" element={<ScrapePage />} />
             <Route path="/scrape-instagram/hashtag-scraper" element={<ScrapePage />} />

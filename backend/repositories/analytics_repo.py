@@ -108,7 +108,10 @@ def _vector_literal(values: list[float]) -> str:
     return f"[{','.join(str(value) for value in values)}]"
 
 
-async def get_overview(db: AsyncSession) -> dict:
+async def get_overview(db: AsyncSession, period_label: str | None = None) -> dict:
+    period_expr = ":period_label" if period_label else "(SELECT MAX(period_label) FROM account_monthly_summary)"
+    hashtag_period_expr = ":period_label" if period_label else "(SELECT MAX(period_label) FROM hashtag_performance)"
+    latest_period_expr = ":period_label" if period_label else "(SELECT MAX(period_label) FROM account_monthly_summary)"
     result = await db.execute(text("""
         SELECT
             (SELECT COUNT(*) FROM profiles) AS total_profiles,
@@ -122,37 +125,48 @@ async def get_overview(db: AsyncSession) -> dict:
             ) AS total_posts,
             (SELECT COALESCE(AVG(followers_count), 0) FROM profiles) AS avg_followers,
             (SELECT username FROM profiles ORDER BY followers_count DESC LIMIT 1) AS top_profile,
-            (SELECT MAX(period_label) FROM account_monthly_summary) AS latest_period,
+            {latest_period_expr} AS latest_period,
             (
                 SELECT COUNT(*)
                 FROM account_monthly_summary
-                WHERE period_label = (SELECT MAX(period_label) FROM account_monthly_summary)
+                WHERE period_label = {period_expr}
             ) AS active_accounts,
             (
                 SELECT COALESCE(ROUND(AVG(avg_engagement_rate), 2), 0)
                 FROM account_monthly_summary
-                WHERE period_label = (SELECT MAX(period_label) FROM account_monthly_summary)
+                WHERE period_label = {period_expr}
             ) AS avg_engagement_rate,
             (
                 SELECT tag
                 FROM hashtag_performance
-                WHERE period_label = (SELECT MAX(period_label) FROM hashtag_performance)
+                WHERE period_label = {hashtag_period_expr}
                 ORDER BY avg_engagement_rate DESC NULLS LAST, post_count DESC, total_likes DESC
                 LIMIT 1
             ) AS top_hashtag
-    """))
+    """.format(period_expr=period_expr, hashtag_period_expr=hashtag_period_expr, latest_period_expr=latest_period_expr)), ({"period_label": period_label} if period_label else {}))
     row = result.mappings().first()
     return dict(row) if row else {}
 
 
-async def get_follower_growth(db: AsyncSession, username: str | None = None) -> list[dict]:
+async def get_follower_growth(
+    db: AsyncSession,
+    username: str | None = None,
+    up_to_period_label: str | None = None,
+) -> list[dict]:
+    params: dict[str, str] = {}
+    period_clause = ""
+    if up_to_period_label:
+        period_clause = " AND period_label <= :up_to_period_label"
+        params["up_to_period_label"] = up_to_period_label
+
     if username:
+        params["username"] = username
         result = await db.execute(text("""
             SELECT period_label, followers_count, username, follower_delta, follower_delta_pct, scraped_at
             FROM profile_follower_growth
-            WHERE username = :username
+            WHERE username = :username {period_clause}
             ORDER BY scraped_at
-        """), {"username": username})
+        """.format(period_clause=period_clause)), params)
     else:
         result = await db.execute(text("""
             SELECT
@@ -163,9 +177,10 @@ async def get_follower_growth(db: AsyncSession, username: str | None = None) -> 
                 NULL::numeric AS follower_delta_pct,
                 MAX(scraped_at) AS scraped_at
             FROM profile_follower_growth
+            WHERE 1 = 1 {period_clause}
             GROUP BY period_label
             ORDER BY MAX(scraped_at)
-        """))
+        """.format(period_clause=period_clause)), params)
     return [dict(r) for r in result.mappings().all()]
 
 
@@ -204,13 +219,20 @@ async def get_engagement_by_profile(db: AsyncSession) -> list[dict]:
     return [dict(r) for r in result.mappings().all()]
 
 
-async def get_post_volume(db: AsyncSession) -> list[dict]:
+async def get_post_volume(db: AsyncSession, up_to_period_label: str | None = None) -> list[dict]:
+    params: dict[str, str] = {}
+    period_clause = ""
+    if up_to_period_label:
+        period_clause = " WHERE period_label <= :up_to_period_label"
+        params["up_to_period_label"] = up_to_period_label
+
     result = await db.execute(text("""
         SELECT period_label, SUM(posts_count) AS post_count
         FROM account_monthly_summary
+        {period_clause}
         GROUP BY period_label
         ORDER BY period_label
-    """))
+    """.format(period_clause=period_clause)), params)
     return [dict(r) for r in result.mappings().all()]
 
 
@@ -312,29 +334,37 @@ async def get_hashtag_performance(
     return [dict(r) for r in result.mappings().all()]
 
 
-async def get_posting_time_heatmap(db: AsyncSession, username: str | None = None) -> list[dict]:
+async def get_posting_time_heatmap(
+    db: AsyncSession,
+    username: str | None = None,
+    period_label: str | None = None,
+) -> list[dict]:
     query = """
         SELECT
-            MIN(day_name) AS day_name,
-            day_of_week::int AS day_of_week,
-            hour_of_day::int AS hour_of_day,
-            SUM(post_count)::int AS post_count,
-            ROUND(AVG(avg_likes), 0)::int AS avg_likes,
-            ROUND(AVG(avg_comments), 0)::int AS avg_comments,
-            ROUND(AVG(avg_engagement_rate), 2) AS avg_engagement_rate
-        FROM posting_time_heatmap
+            MIN(to_char(pe.timestamp, 'Dy')) AS day_name,
+            extract(dow from pe.timestamp)::int AS day_of_week,
+            extract(hour from pe.timestamp)::int AS hour_of_day,
+            COUNT(*)::int AS post_count,
+            ROUND(AVG(pe.likes_count), 0)::int AS avg_likes,
+            ROUND(AVG(pe.comments_count), 0)::int AS avg_comments,
+            ROUND(AVG(pe.engagement_rate), 2) AS avg_engagement_rate
+        FROM post_engagement pe
+        WHERE pe.timestamp IS NOT NULL
     """
     params: dict[str, str] = {}
     if username:
-        query += " WHERE owner_username = :username"
+        query += " AND pe.owner_username = :username"
         params["username"] = username
+    if period_label:
+        query += " AND pe.period_label = :period_label"
+        params["period_label"] = period_label
     query += " GROUP BY day_of_week, hour_of_day ORDER BY day_of_week, hour_of_day"
     result = await db.execute(text(query), params)
     return [dict(r) for r in result.mappings().all()]
 
 
-async def get_scrape_run_summary(db: AsyncSession, limit: int = 10) -> list[dict]:
-    result = await db.execute(text("""
+async def get_scrape_run_summary(db: AsyncSession, limit: int = 10, max_run_id: int | None = None) -> list[dict]:
+    query = """
         SELECT
             id,
             scraper_type,
@@ -351,8 +381,13 @@ async def get_scrape_run_summary(db: AsyncSession, limit: int = 10) -> list[dict
             schedule_frequency,
             duration_seconds
         FROM scrape_run_summary
-        LIMIT :limit
-    """), {"limit": limit})
+    """
+    params: dict[str, int] = {"limit": limit}
+    if max_run_id is not None:
+        query += " WHERE id <= :max_run_id"
+        params["max_run_id"] = max_run_id
+    query += " ORDER BY id DESC LIMIT :limit"
+    result = await db.execute(text(query), params)
     return [dict(r) for r in result.mappings().all()]
 
 

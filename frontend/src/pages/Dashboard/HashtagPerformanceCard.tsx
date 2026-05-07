@@ -2,8 +2,12 @@ import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { ChartCard } from "../../components/ChartCard"
 import { useHashtagPerformance } from "../../hooks/useAnalytics"
 
-export function HashtagPerformanceCard() {
-  const { data } = useHashtagPerformance(undefined, undefined, 12)
+interface HashtagPerformanceCardProps {
+  periodLabel?: string
+}
+
+export function HashtagPerformanceCard({ periodLabel }: HashtagPerformanceCardProps) {
+  const { data } = useHashtagPerformance(periodLabel, undefined, 12)
 
   return (
     <ChartCard title="Hashtag Performance">

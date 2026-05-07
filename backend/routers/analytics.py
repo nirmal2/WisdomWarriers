@@ -24,13 +24,20 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
 @router.get("/overview")
-async def overview(db: AsyncSession = Depends(get_db)) -> dict:
-    return await get_overview(db)
+async def overview(
+    period_label: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await get_overview(db, period_label)
 
 
 @router.get("/follower-growth")
-async def follower_growth(username: str | None = None, db: AsyncSession = Depends(get_db)) -> list:
-    return await get_follower_growth(db, username)
+async def follower_growth(
+    username: str | None = None,
+    up_to_period_label: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> list:
+    return await get_follower_growth(db, username, up_to_period_label)
 
 
 @router.get("/top-profiles")
@@ -51,8 +58,11 @@ async def engagement(db: AsyncSession = Depends(get_db)) -> list:
 
 
 @router.get("/post-trends")
-async def post_trends(db: AsyncSession = Depends(get_db)) -> list:
-    return await get_post_volume(db)
+async def post_trends(
+    up_to_period_label: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> list:
+    return await get_post_volume(db, up_to_period_label)
 
 
 @router.get("/account-summary")
@@ -85,14 +95,19 @@ async def hashtag_performance(
 @router.get("/posting-time-heatmap")
 async def posting_time_heatmap(
     username: str | None = None,
+    period_label: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> list:
-    return await get_posting_time_heatmap(db, username)
+    return await get_posting_time_heatmap(db, username, period_label)
 
 
 @router.get("/scrape-run-summary")
-async def scrape_run_summary(limit: int = 10, db: AsyncSession = Depends(get_db)) -> list:
-    return await get_scrape_run_summary(db, limit)
+async def scrape_run_summary(
+    limit: int = 10,
+    max_run_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> list:
+    return await get_scrape_run_summary(db, limit, max_run_id)
 
 
 @router.get("/post-engagement-history")
