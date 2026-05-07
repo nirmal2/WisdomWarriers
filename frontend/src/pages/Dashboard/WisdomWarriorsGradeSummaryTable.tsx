@@ -41,6 +41,7 @@ export function WisdomWarriorsGradeSummaryTable({ selectedSnapshotRunId, monthLa
           username: warrior.username,
           views: viewsByUsername.get(warrior.username.trim().toLowerCase()) ?? 0,
         }))
+        .filter(channel => channel.views > 0)
         .sort((a, b) => b.views - a.views || a.username.localeCompare(b.username))
         .slice(0, 10)
 
