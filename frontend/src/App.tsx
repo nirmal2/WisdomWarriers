@@ -13,7 +13,6 @@ import ChatPage from "./pages/Chat"
 import ScrapePage from "./pages/Scrape"
 import CompareRunsPage from "./pages/CompareRuns"
 import WisdomWarriorsPage from "./pages/WisdomWarriors"
-import { fetchScrapeStatus } from "./api/scrape"
 import { fetchWisdomWarriorsSnapshotRuns, type WisdomWarriorSnapshotRun } from "./api/wisdomWarriors"
 
 const formatLocalDate = (value: string): string => {
@@ -174,13 +173,8 @@ function Sidebar() {
 export default function App() {
   const [selectedSnapshotRunId, setSelectedSnapshotRunId] = useState<number | undefined>(undefined)
   const [selectedMonth, setSelectedMonth] = useState("")
-  const [selectedDate, setSelectedDate] = useState("")
-
-  const { data: scrapeStatus } = useQuery({
-    queryKey: ["global-last-scrape"],
-    queryFn: () => fetchScrapeStatus(),
-    refetchInterval: 15000,
-  })
+  const [selectedDateFrom, setSelectedDateFrom] = useState("")
+  const [selectedDateTo, setSelectedDateTo] = useState("")
 
   const { data: snapshotRuns = [] } = useQuery({
     queryKey: ["global-snapshot-runs"],
@@ -188,15 +182,37 @@ export default function App() {
     refetchInterval: 30000,
   })
 
+  const filteredSnapshotRuns = useMemo(() => {
+    return snapshotRuns.filter(run => {
+      const runDate = formatLocalDate(run.scraped_at)
+      if (!runDate) return false
+      if (selectedDateFrom && runDate < selectedDateFrom) return false
+      if (selectedDateTo && runDate > selectedDateTo) return false
+      return true
+    })
+  }, [snapshotRuns, selectedDateFrom, selectedDateTo])
+
+  const hasInvalidDateRange = Boolean(selectedDateFrom && selectedDateTo && selectedDateFrom > selectedDateTo)
+
   useEffect(() => {
-    if (selectedSnapshotRunId !== undefined) return
-    if (snapshotRuns.length === 0) return
-    setSelectedSnapshotRunId(snapshotRuns[0].run_id)
-  }, [selectedSnapshotRunId, snapshotRuns])
+    if (hasInvalidDateRange) return
+    if (filteredSnapshotRuns.length === 0) {
+      setSelectedSnapshotRunId(undefined)
+      return
+    }
+    if (selectedSnapshotRunId === undefined) {
+      setSelectedSnapshotRunId(filteredSnapshotRuns[0].run_id)
+      return
+    }
+    const selectedStillVisible = filteredSnapshotRuns.some(run => run.run_id === selectedSnapshotRunId)
+    if (!selectedStillVisible) {
+      setSelectedSnapshotRunId(filteredSnapshotRuns[0].run_id)
+    }
+  }, [filteredSnapshotRuns, hasInvalidDateRange, selectedSnapshotRunId])
 
   const selectedSnapshotRun = useMemo(
-    () => snapshotRuns.find(run => run.run_id === selectedSnapshotRunId),
-    [snapshotRuns, selectedSnapshotRunId]
+    () => filteredSnapshotRuns.find(run => run.run_id === selectedSnapshotRunId),
+    [filteredSnapshotRuns, selectedSnapshotRunId]
   )
 
   useEffect(() => {
@@ -204,25 +220,11 @@ export default function App() {
     const snapshotDate = formatLocalDate(selectedSnapshotRun.scraped_at)
     const snapshotMonth = snapshotDate.slice(0, 7)
     setSelectedMonth(snapshotMonth)
-    setSelectedDate(snapshotDate)
   }, [selectedSnapshotRun?.scraped_at])
-
-  useEffect(() => {
-    if (!selectedDate) return
-    const firstRunOnDate = snapshotRuns.find(run => formatLocalDate(run.scraped_at) === selectedDate)
-    if (firstRunOnDate && firstRunOnDate.run_id !== selectedSnapshotRunId) {
-      setSelectedSnapshotRunId(firstRunOnDate.run_id)
-    }
-  }, [selectedDate, selectedSnapshotRunId, snapshotRuns])
-
-  const lastScrapedAt = scrapeStatus?.run?.finished_at ?? scrapeStatus?.run?.started_at
-  const fallbackLastScrapedLabel = lastScrapedAt
-    ? new Date(lastScrapedAt).toLocaleString()
-    : "Not available"
 
   const selectedScrapedLabel = selectedSnapshotRun?.scraped_at
     ? new Date(selectedSnapshotRun.scraped_at).toLocaleString()
-    : fallbackLastScrapedLabel
+    : (hasInvalidDateRange ? "Invalid date range" : "No runs in selected range")
 
   return (
     <BrowserRouter>
@@ -240,10 +242,10 @@ export default function App() {
                   setSelectedSnapshotRunId(value ? Number(value) : undefined)
                 }}
                 className="min-w-[240px] rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100"
-                disabled={snapshotRuns.length === 0}
+                disabled={filteredSnapshotRuns.length === 0 || hasInvalidDateRange}
               >
-                {snapshotRuns.length === 0 && <option value="">{selectedScrapedLabel}</option>}
-                {snapshotRuns.map((run: WisdomWarriorSnapshotRun) => (
+                {filteredSnapshotRuns.length === 0 && <option value="">{selectedScrapedLabel}</option>}
+                {filteredSnapshotRuns.map((run: WisdomWarriorSnapshotRun) => (
                   <option key={run.run_id} value={run.run_id}>
                     {new Date(run.scraped_at).toLocaleString()}
                   </option>
@@ -259,14 +261,28 @@ export default function App() {
                 className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100"
               />
 
-              <label htmlFor="global-date-filter" className="ml-1 text-gray-300">Date:</label>
+              <label htmlFor="global-date-from" className="ml-1 text-gray-300">From:</label>
               <input
-                id="global-date-filter"
+                id="global-date-from"
                 type="date"
-                value={selectedDate}
-                onChange={e => setSelectedDate(e.target.value)}
+                value={selectedDateFrom}
+                onChange={e => setSelectedDateFrom(e.target.value)}
                 className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100"
               />
+
+              <label htmlFor="global-date-to" className="ml-1 text-gray-300">To:</label>
+              <input
+                id="global-date-to"
+                type="date"
+                value={selectedDateTo}
+                min={selectedDateFrom || undefined}
+                onChange={e => setSelectedDateTo(e.target.value)}
+                className="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-xs text-gray-100"
+              />
+
+              {hasInvalidDateRange && (
+                <span className="text-[11px] text-red-400">From date must be on or before To date.</span>
+              )}
             </div>
           </div>
           <Routes>
