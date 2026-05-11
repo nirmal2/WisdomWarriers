@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { fetchProfilesSource, fetchRunProfileProgress, fetchScrapeStatus, resumePendingPosts, triggerScrape } from "../../api/scrape"
+import { fetchProfilesSource, fetchRunProfileProgress, fetchScrapeStatus, refetchRunFromApify, resumePendingPosts, triggerScrape } from "../../api/scrape"
 import { RecentRunsTable } from "../Dashboard/RecentRunsTable"
+import type { ScrapeRun } from "../../types/schedule"
 
 function parseUsernames(value: string) {
   return Array.from(new Set(value.split(/\r?\n/).map(line => line.trim()).filter(Boolean)))
@@ -39,6 +40,9 @@ export default function ScrapePage() {
   const [enableEmbeddings, setEnableEmbeddings] = useState(false)
   const [apifyToken, setApifyToken] = useState("")
   const [isScrapeLocked, setIsScrapeLocked] = useState(false)
+  const [refetchRunIdText, setRefetchRunIdText] = useState("")
+  const [includeRefetchLogs, setIncludeRefetchLogs] = useState(true)
+  const [refetchStage, setRefetchStage] = useState<{ runId: number; stage: "posts" | "profiles" } | null>(null)
   const usernames = parseUsernames(profilesText)
 
   const { data: statusData } = useQuery({
@@ -79,11 +83,18 @@ export default function ScrapePage() {
     && (currentRunStatus === "completed" || currentRunStatus === "failed")
     && remainingRetryableCount > 0
     && !isScrapeBusy
+  const parsedRefetchRunId = Number(refetchRunIdText)
+  const isRefetchRunIdValid = Number.isInteger(parsedRefetchRunId) && parsedRefetchRunId > 0
 
   useEffect(() => {
     if (!statusData?.run) return
     setActiveRunId(prev => prev ?? statusData.run?.id)
   }, [statusData])
+
+  useEffect(() => {
+    if (!activeRunId) return
+    setRefetchRunIdText(prev => prev.trim() ? prev : String(activeRunId))
+  }, [activeRunId])
 
   useEffect(() => {
     if (!statusData) return
@@ -182,6 +193,30 @@ export default function ScrapePage() {
       setIsScrapeLocked(false)
       const message = error instanceof Error ? error.message : "Failed to resume pending profiles"
       setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`].slice(-120))
+    }
+  }
+
+  const handleRefetchExistingRun = async (stage: "posts" | "profiles", runIdOverride?: number) => {
+    const runId = typeof runIdOverride === "number" ? runIdOverride : parsedRefetchRunId
+    if (isScrapeBusy || refetchStage !== null || !Number.isInteger(runId) || runId <= 0) return
+    setRefetchRunIdText(String(runId))
+    setRefetchStage({ runId, stage })
+    setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Refetching ${stage} stage from Apify for run #${runId}...`].slice(-120))
+    try {
+      const result = await refetchRunFromApify(runId, stage, includeRefetchLogs)
+      setActiveRunId(result.run_id)
+      qc.invalidateQueries({ queryKey: ["scrape-status", result.run_id] })
+      qc.invalidateQueries({ queryKey: ["run-profile-progress", result.run_id] })
+      qc.invalidateQueries({ queryKey: ["runs"] })
+      setLiveLogs(prev => [
+        ...prev,
+        `[${new Date().toLocaleTimeString()}] Refetch complete for run #${result.run_id} (${stage}): ${result.items_count} item(s) replayed across stored Apify runs.`,
+      ].slice(-120))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to refetch existing run"
+      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`].slice(-120))
+    } finally {
+      setRefetchStage(null)
     }
   }
 
@@ -406,6 +441,57 @@ export default function ScrapePage() {
               )}
             </div>
           )}
+          <div className="mt-3 rounded-lg border border-gray-800 bg-gray-950/60 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-gray-200">Refetch Existing Run From Apify</p>
+                <p className="text-[11px] text-gray-500 mt-1">Use an existing internal run ID to replay stored Apify run outputs into the database.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="sm:col-span-1">
+                <label className="text-[11px] text-gray-400">Internal Run ID</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={refetchRunIdText}
+                  onChange={e => setRefetchRunIdText(e.target.value)}
+                  placeholder={activeRunId ? String(activeRunId) : "e.g. 123"}
+                  className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="sm:col-span-2 flex flex-col justify-end gap-2">
+                <label className="inline-flex items-center gap-2 text-[11px] text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={includeRefetchLogs}
+                    onChange={e => setIncludeRefetchLogs(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-gray-600 accent-blue-500"
+                  />
+                  Include raw Apify logs in run logs
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => handleRefetchExistingRun("posts")}
+                    disabled={!isRefetchRunIdValid || isScrapeBusy || refetchStage !== null}
+                    className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {refetchStage?.stage === "posts" && refetchStage.runId === parsedRefetchRunId ? "Refetching Posts…" : "Refetch Posts Stage"}
+                  </button>
+                  <button
+                    onClick={() => handleRefetchExistingRun("profiles")}
+                    disabled={!isRefetchRunIdValid || isScrapeBusy || refetchStage !== null}
+                    className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {refetchStage?.stage === "profiles" && refetchStage.runId === parsedRefetchRunId ? "Refetching Profiles…" : "Refetch Profiles Stage"}
+                  </button>
+                  {!isRefetchRunIdValid && (
+                    <span className="text-[11px] text-amber-300">Enter a valid run ID to enable refetch.</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
@@ -588,7 +674,19 @@ export default function ScrapePage() {
       </div>
       <div className="bg-gray-900 rounded-xl border border-gray-800 p-5">
         <h2 className="text-sm font-semibold text-gray-300 mb-4">Recent Scrape Runs</h2>
-        <RecentRunsTable />
+        <RecentRunsTable
+          onSelectRun={(run: ScrapeRun) => {
+            setActiveRunId(run.id)
+            setRefetchRunIdText(String(run.id))
+          }}
+          onRefetchStage={(run: ScrapeRun, stage: "posts" | "profiles") => {
+            setActiveRunId(run.id)
+            setRefetchRunIdText(String(run.id))
+            void handleRefetchExistingRun(stage, run.id)
+          }}
+          refetchingRunId={refetchStage?.runId ?? null}
+          refetchingStage={refetchStage?.stage ?? null}
+        />
       </div>
     </div>
   )
