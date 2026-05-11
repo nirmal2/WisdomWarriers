@@ -1,6 +1,7 @@
 import asyncio
 import json
 from functools import partial
+from typing import Any
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -144,6 +145,47 @@ def _append_lines_to_raw_logs(raw_logs: str | None, lines_to_add: list[str], max
             lines = []
     lines.extend([line for line in lines_to_add if isinstance(line, str)])
     return json.dumps(lines[-max_lines:])
+
+
+def _load_apify_stage_history(raw_history: str | None) -> list[dict[str, Any]]:
+    if not raw_history:
+        return []
+    try:
+        loaded = json.loads(raw_history)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(loaded, list):
+        return []
+    return [row for row in loaded if isinstance(row, dict)]
+
+
+def _collect_unique_apify_runs_for_stage(run: ScrapeRun, stage: str) -> list[tuple[str, str, str | None]]:
+    stage_key = stage.strip().lower()
+    history = _load_apify_stage_history(run.apify_stage_history)
+
+    pairs: list[tuple[str, str, str | None]] = []
+    seen: set[tuple[str, str]] = set()
+    for event in history:
+        if str(event.get("stage") or "").strip().lower() != stage_key:
+            continue
+        run_id = str(event.get("run_id") or "").strip()
+        dataset_id = str(event.get("dataset_id") or "").strip()
+        actor_id = str(event.get("actor_id") or "").strip() or None
+        if not run_id or not dataset_id:
+            continue
+        key = (run_id, dataset_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append((run_id, dataset_id, actor_id))
+
+    latest_run_id = str(getattr(run, f"apify_{stage_key}_run_id", "") or "").strip()
+    latest_dataset_id = str(getattr(run, f"apify_{stage_key}_dataset_id", "") or "").strip()
+    latest_actor_id = str(getattr(run, f"apify_{stage_key}_actor_id", "") or "").strip() or None
+    if latest_run_id and latest_dataset_id and (latest_run_id, latest_dataset_id) not in seen:
+        pairs.append((latest_run_id, latest_dataset_id, latest_actor_id))
+
+    return pairs
 
 
 def _build_insights(summary: dict, profile_deltas: list[dict], latest_post_deltas: list[dict]) -> list[InsightRead]:
@@ -393,10 +435,8 @@ async def refetch_run_from_apify(
         raise HTTPException(status_code=409, detail="Run is currently running")
 
     stage = req.stage
-    apify_run_id = getattr(run, f"apify_{stage}_run_id", None)
-    apify_dataset_id = getattr(run, f"apify_{stage}_dataset_id", None)
-    apify_actor_id = getattr(run, f"apify_{stage}_actor_id", None)
-    if not apify_run_id or not apify_dataset_id:
+    stage_runs = _collect_unique_apify_runs_for_stage(run, stage)
+    if not stage_runs:
         raise HTTPException(status_code=400, detail=f"No stored Apify metadata for stage '{stage}'")
 
     apify_token = _extract_apify_token_from_resume_payload(run.resume_payload)
@@ -406,30 +446,37 @@ async def refetch_run_from_apify(
     date_to = payload.get("date_to")
 
     loop = asyncio.get_event_loop()
-    items, logs, metadata = await loop.run_in_executor(
-        None,
-        partial(refetch_apify_run_output, apify_run_id, apify_dataset_id, apify_token),
-    )
-    metadata["actor_id"] = apify_actor_id
+    all_items: list[dict[str, Any]] = []
+    all_logs: list[str] = []
+    latest_metadata: dict[str, Any] = {}
 
-    await update_apify_stage_metadata(
-        db,
-        run.id,
-        stage=stage,
-        metadata=metadata,
-        event_type="refetch",
-        extra={
-            "items_count": len(items),
-            "logs_count": len(logs),
-        },
-    )
+    for external_run_id, dataset_id, actor_id in stage_runs:
+        items, logs, metadata = await loop.run_in_executor(
+            None,
+            partial(refetch_apify_run_output, external_run_id, dataset_id, apify_token),
+        )
+        metadata["actor_id"] = actor_id
+        await update_apify_stage_metadata(
+            db,
+            run.id,
+            stage=stage,
+            metadata=metadata,
+            event_type="refetch",
+            extra={
+                "items_count": len(items),
+                "logs_count": len(logs),
+            },
+        )
+        all_items.extend(items)
+        all_logs.extend(logs)
+        latest_metadata = metadata
 
     summary_line = (
-        f"Apify refetch ({stage}) completed: run_id={metadata.get('run_id')}, "
-        f"dataset_id={metadata.get('dataset_id')}, items={len(items)}, logs={len(logs)}"
+        f"Apify refetch ({stage}) completed: unique_runs={len(stage_runs)}, "
+        f"items={len(all_items)}, logs={len(all_logs)}"
     )
     if req.include_logs:
-        run.raw_logs = _append_lines_to_raw_logs(run.raw_logs, [summary_line, *logs])
+        run.raw_logs = _append_lines_to_raw_logs(run.raw_logs, [summary_line, *all_logs])
     else:
         run.raw_logs = _append_lines_to_raw_logs(run.raw_logs, [summary_line])
     await db.commit()
@@ -437,7 +484,7 @@ async def refetch_run_from_apify(
     if stage == "posts":
         replay_result = await replay_posts_stage_from_apify_items(
             run_id=run.id,
-            raw_items=items,
+            raw_items=all_items,
             frequency=frequency,
             date_from=date_from if isinstance(date_from, str) else None,
             date_to=date_to if isinstance(date_to, str) else None,
@@ -445,18 +492,18 @@ async def refetch_run_from_apify(
     else:
         replay_result = await replay_profiles_stage_from_apify_items(
             run_id=run.id,
-            raw_items=items,
+            raw_items=all_items,
             frequency=frequency,
         )
 
     return ApifyRefetchRead(
         run_id=run.id,
         stage=stage,
-        apify_run_id=str(metadata.get("run_id") or apify_run_id),
-        apify_dataset_id=str(metadata.get("dataset_id") or apify_dataset_id),
-        apify_status=str(metadata.get("status") or "") or None,
-        items_count=int(replay_result.get("items_fetched", len(items))),
-        logs_count=len(logs),
+        apify_run_id=str(latest_metadata.get("run_id") or stage_runs[-1][0]),
+        apify_dataset_id=str(latest_metadata.get("dataset_id") or stage_runs[-1][1]),
+        apify_status=str(latest_metadata.get("status") or "") or None,
+        items_count=int(replay_result.get("items_fetched", len(all_items))),
+        logs_count=len(all_logs),
         status="refetched",
     )
 

@@ -1153,6 +1153,7 @@ async def replay_posts_stage_from_apify_items(
         scraped_at = datetime.now(timezone.utc)
         per_user_counts: dict[str, int] = {username: 0 for username in requested_usernames}
         imported = 0
+        seen_post_keys: set[tuple[str, str]] = set()
 
         for raw in raw_items:
             norm = normalize_post(raw)
@@ -1167,6 +1168,11 @@ async def replay_posts_stage_from_apify_items(
                 continue
             if requested_set and owner_username not in requested_set:
                 continue
+
+            dedupe_key = (owner_username, url)
+            if dedupe_key in seen_post_keys:
+                continue
+            seen_post_keys.add(dedupe_key)
 
             norm["owner_username"] = owner_username
             norm["id"] = _post_id(url, period_label)
@@ -1272,6 +1278,7 @@ async def replay_profiles_stage_from_apify_items(
         scraped_at = datetime.now(timezone.utc)
         imported = 0
         seen_usernames: set[str] = set()
+        replayed_usernames: set[str] = set()
 
         for raw in raw_items:
             norm = normalize_profile(raw)
@@ -1281,6 +1288,9 @@ async def replay_profiles_stage_from_apify_items(
                 continue
             if requested_set and username not in requested_set:
                 continue
+            if username in replayed_usernames:
+                continue
+            replayed_usernames.add(username)
 
             profile = await profile_repo.upsert_profile(db, norm)
             await profile_repo.insert_snapshot(db, {
