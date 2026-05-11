@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.db.engine import get_db
+from backend.config import get_settings
 from backend.models.post_snapshot import PostSnapshot
 from backend.models.profile_snapshot import ProfileSnapshot
 from backend.models.scrape_run import ScrapeRun
@@ -59,6 +60,32 @@ from backend.repositories.scrape_run_repo import (
 
 router = APIRouter(prefix="/api/scrape", tags=["scrape"])
 RESUME_LOG_MARKER = "Server restarted; resuming scrape run from persisted settings."
+
+_TERMINAL_FAILURE_HINTS = (
+    "no profile data returned",
+    "not found",
+    "private",
+    "invalid",
+    "username does not exist",
+)
+
+
+def _classify_failure(error_message: str | None) -> str:
+    message = (error_message or "").strip().lower()
+    if not message:
+        return "unknown"
+    if any(hint in message for hint in _TERMINAL_FAILURE_HINTS):
+        return "data"
+    if "timeout" in message or "timed out" in message or "rate limit" in message or "429" in message:
+        return "transient"
+    if "connection" in message or "network" in message:
+        return "transient"
+    return "system"
+
+
+def _is_retryable_failure(error_message: str | None) -> bool:
+    category = _classify_failure(error_message)
+    return category in ("transient", "system", "unknown")
 
 
 def _resume_detected_from_raw_logs(raw_logs: str | None) -> bool:
@@ -374,6 +401,10 @@ async def get_scrape_status(
     pending_profiles = [row.username for row in progress_rows if row.status == "pending"]
     running_profiles = [row.username for row in progress_rows if row.status == "running"]
     failed_profiles_rows = [row for row in progress_rows if row.status == "failed"]
+    settings = get_settings()
+    retryable_failed_rows = [row for row in failed_profiles_rows if _is_retryable_failure(row.error_message)]
+    terminal_failed_rows = [row for row in failed_profiles_rows if not _is_retryable_failure(row.error_message)]
+
     zero_posts_profiles = [row.username for row in progress_rows if row.status == "success" and int(row.items_fetched or 0) == 0]
 
     # Use immutable snapshot rows for per-run counts so values do not drop
@@ -548,6 +579,8 @@ async def get_scrape_status(
             completed_count=len(completed_profiles),
             pending_count=len(pending_profiles),
             failed_count=len(failed_profiles_rows),
+            retryable_failed_count=len(retryable_failed_rows),
+            terminal_failed_count=len(terminal_failed_rows),
             running_count=len(running_profiles),
             completed_profiles=completed_profiles,
             pending_profiles=pending_profiles,
@@ -556,6 +589,10 @@ async def get_scrape_status(
                     username=row.username,
                     attempt_count=int(row.attempt_count or 0),
                     error_message=row.error_message,
+                    failure_category=_classify_failure(row.error_message),
+                    retryable=_is_retryable_failure(row.error_message)
+                    and int(row.attempt_count or 0) < int(settings.scrape_resume_max_attempts or 0),
+                    retries_left=max(0, int(settings.scrape_resume_max_attempts or 0) - int(row.attempt_count or 0)),
                 )
                 for row in failed_profiles_rows
             ],
@@ -608,7 +645,7 @@ async def resume_pending_posts_for_run(
     progress_rows = await get_profile_progress_rows(db, run.id)
     pending_or_failed = [row for row in progress_rows if row.status in ("pending", "failed", "running")]
     if not pending_or_failed:
-        raise HTTPException(status_code=409, detail="No pending profiles found for this run")
+        raise HTTPException(status_code=409, detail="No pending or failed profiles found for this run")
 
     all_usernames = [row.username for row in progress_rows if row.username]
     if not all_usernames:

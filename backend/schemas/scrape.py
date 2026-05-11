@@ -110,6 +110,9 @@ class ScrapeProfileFailureRead(BaseModel):
     username: str
     attempt_count: int = 0
     error_message: Optional[str] = None
+    failure_category: str = "unknown"
+    retryable: bool = False
+    retries_left: int = 0
 
 
 class ScrapeProfileAttemptRead(BaseModel):
@@ -123,6 +126,8 @@ class ScrapeProfileProgressRead(BaseModel):
     completed_count: int = 0
     pending_count: int = 0
     failed_count: int = 0
+    retryable_failed_count: int = 0
+    terminal_failed_count: int = 0
     running_count: int = 0
     completed_profiles: list[str] = []
     pending_profiles: list[str] = []

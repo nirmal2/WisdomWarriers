@@ -62,13 +62,23 @@ export default function ScrapePage() {
   const completedProfiles = profileRows.filter(row => row.status === "success").map(row => row.username)
   const pendingProfiles = profileRows.filter(row => row.status === "pending").map(row => row.username)
   const failedProfiles = profileRows.filter(row => row.status === "failed")
+  const failedProfilesDetailed = profileProgress?.failed_profiles ?? []
   const zeroPostsProfiles = profileRows.filter(row => row.status === "success" && row.items_fetched === 0).map(row => row.username)
   const currentRunStatus = statusData?.run?.status
   const isScrapeBusy = isScrapeLocked || currentRunStatus === "running"
   const hasInvalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
   const effectiveDaysValue = getDerivedDaysValue(newerThanValue, dateFrom)
   const pendingProfileCount = profileProgress?.pending_count ?? pendingProfiles.length
-  const canResumePending = typeof activeRunId === "number" && currentRunStatus === "completed" && pendingProfileCount > 0 && !isScrapeBusy
+  const retryableFailedCount = profileProgress?.retryable_failed_count
+    ?? failedProfilesDetailed.filter(profile => profile.retryable).length
+  const terminalFailedCount = profileProgress?.terminal_failed_count
+    ?? failedProfilesDetailed.filter(profile => !profile.retryable).length
+  const remainingRetryableCount = pendingProfileCount + retryableFailedCount
+  const canResumeRemaining =
+    typeof activeRunId === "number"
+    && (currentRunStatus === "completed" || currentRunStatus === "failed")
+    && remainingRetryableCount > 0
+    && !isScrapeBusy
 
   useEffect(() => {
     if (!statusData?.run) return
@@ -158,16 +168,16 @@ export default function ScrapePage() {
   }
 
   const handleResumePendingPosts = async () => {
-    if (!activeRunId || !canResumePending) return
+    if (!activeRunId || !canResumeRemaining) return
     setIsScrapeLocked(true)
-    setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Resuming pending profiles in run #${activeRunId}...`].slice(-120))
+    setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Resuming pending/failed profiles in run #${activeRunId}...`].slice(-120))
     try {
       const resumed = await resumePendingPosts(activeRunId)
       setActiveRunId(resumed.run_id)
       qc.invalidateQueries({ queryKey: ["scrape-status", resumed.run_id] })
       qc.invalidateQueries({ queryKey: ["run-profile-progress", resumed.run_id] })
       qc.invalidateQueries({ queryKey: ["runs"] })
-      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Pending profile scrape resumed for run #${resumed.run_id}.`].slice(-120))
+      setLiveLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Pending/failed profile scrape resumed for run #${resumed.run_id}.`].slice(-120))
     } catch (error) {
       setIsScrapeLocked(false)
       const message = error instanceof Error ? error.message : "Failed to resume pending profiles"
@@ -367,14 +377,19 @@ export default function ScrapePage() {
             )}
           </div>
           <p className="text-xs text-gray-400 mt-1">Rows updated for the selected run.</p>
-          {canResumePending && (
+          {canResumeRemaining && (
             <div className="mt-3">
               <button
                 onClick={handleResumePendingPosts}
                 className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-500"
               >
-                Scrape Pending Wisdom Warriors ({pendingProfileCount})
+                Scrape Pending/Failed Wisdom Warriors ({remainingRetryableCount})
               </button>
+              {terminalFailedCount > 0 && (
+                <p className="mt-2 text-[11px] text-red-300">
+                  {terminalFailedCount} terminal failure(s) require manual fix and are excluded from retry.
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -394,6 +409,9 @@ export default function ScrapePage() {
           <div className="rounded-lg border border-gray-800 bg-gray-950 p-3">
             <p className="text-xs text-gray-400">Profiles Failed</p>
             <p className="text-lg font-semibold mt-1">{profileProgress?.failed_count ?? 0}</p>
+            <p className="mt-1 text-[11px] text-gray-500">
+              Retryable: {retryableFailedCount} | Terminal: {terminalFailedCount}
+            </p>
           </div>
         </div>
         {profileProgress?.server_failure_message && (
@@ -448,17 +466,27 @@ export default function ScrapePage() {
             <p className="text-xs text-gray-400">Failed Profiles (Post Scraper)</p>
             <p className="text-xs text-red-300">{profileProgress?.failed_count ?? 0} failed</p>
           </div>
-          {(failedProfiles.length ? failedProfiles.length : (profileProgress?.failed_profiles?.length ?? 0)) ? (
+          {(failedProfiles.length ? failedProfiles.length : failedProfilesDetailed.length) ? (
             <div className="space-y-2 max-h-44 overflow-auto pr-1">
-              {(failedProfiles.length ? failedProfiles : (profileProgress?.failed_profiles ?? [])).map(profile => (
+              {(failedProfilesDetailed.length ? failedProfilesDetailed : failedProfiles).map(profile => (
                 <div
                   key={profile.username}
                   className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-xs"
                 >
                   <div className="flex items-center justify-between gap-2 text-red-200">
                     <span className="font-medium">{profile.username}</span>
-                    <span>attempts: {profile.attempt_count}</span>
+                    <span>
+                      attempts: {profile.attempt_count}
+                      {" | "}
+                      {"retryable" in profile && profile.retryable ? "retryable" : "terminal"}
+                    </span>
                   </div>
+                  {"failure_category" in profile && (
+                    <p className="mt-1 text-red-300/90 break-words">category: {profile.failure_category}</p>
+                  )}
+                  {"retries_left" in profile && (
+                    <p className="mt-1 text-red-300/90 break-words">retries left: {profile.retries_left}</p>
+                  )}
                   {profile.error_message && (
                     <p className="mt-1 text-red-300/90 break-words">{profile.error_message}</p>
                   )}

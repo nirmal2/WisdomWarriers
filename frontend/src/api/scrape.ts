@@ -48,6 +48,9 @@ export interface ScrapeProfileFailure {
   username: string
   attempt_count: number
   error_message?: string
+  failure_category: string
+  retryable: boolean
+  retries_left: number
 }
 
 export interface ScrapeProfileAttempt {
@@ -79,6 +82,8 @@ export interface ScrapeProfileProgress {
   completed_count: number
   pending_count: number
   failed_count: number
+  retryable_failed_count: number
+  terminal_failed_count: number
   running_count: number
   completed_profiles: string[]
   pending_profiles: string[]

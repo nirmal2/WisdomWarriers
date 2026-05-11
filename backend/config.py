@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     apify_actor_timeout_seconds: int = 900
     resume_incomplete_scrapes_on_startup: bool = True
     scrape_resume_max_attempts: int = 3
+    scrape_retry_backoff_base_seconds: int = 2
+    scrape_retry_backoff_max_seconds: int = 30
 
     # Supabase Storage (optional)
     supabase_url: str | None = None
