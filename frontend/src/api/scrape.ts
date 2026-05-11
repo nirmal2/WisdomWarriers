@@ -102,6 +102,17 @@ export interface ScrapeStatusResponse {
   logs: string[]
 }
 
+export interface ApifyRefetchResponse {
+  run_id: number
+  stage: "posts" | "profiles"
+  apify_run_id: string
+  apify_dataset_id: string
+  apify_status?: string
+  items_count: number
+  logs_count: number
+  status: string
+}
+
 export const triggerScrape = (body: ScrapeRequest): Promise<ScrapeStartResponse> =>
   fetch(`${API_URL}/api/scrape/run`, {
     method: "POST",
@@ -164,6 +175,23 @@ export const resumePendingPosts = (runId: number): Promise<ScrapeStartResponse> 
     if (!r.ok) {
       const err = await r.json().catch(() => ({ detail: "Failed to resume pending profiles" }))
       throw new Error(err.detail ?? "Failed to resume pending profiles")
+    }
+    return r.json()
+  })
+
+export const refetchRunFromApify = (
+  runId: number,
+  stage: "posts" | "profiles",
+  includeLogs = true,
+): Promise<ApifyRefetchResponse> =>
+  fetch(`${API_URL}/api/scrape/runs/${runId}/apify-refetch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stage, include_logs: includeLogs }),
+  }).then(async r => {
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: "Failed to refetch from Apify" }))
+      throw new Error(err.detail ?? "Failed to refetch from Apify")
     }
     return r.json()
   })

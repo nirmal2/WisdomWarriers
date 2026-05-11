@@ -39,6 +39,19 @@ export interface ScrapeRun {
   error_message?: string
   embedding_error_message?: string
   resume_detected?: boolean
+  apify_posts_actor_id?: string
+  apify_posts_run_id?: string
+  apify_posts_dataset_id?: string
+  apify_posts_started_at?: string
+  apify_posts_finished_at?: string
+  apify_posts_status?: string
+  apify_profiles_actor_id?: string
+  apify_profiles_run_id?: string
+  apify_profiles_dataset_id?: string
+  apify_profiles_started_at?: string
+  apify_profiles_finished_at?: string
+  apify_profiles_status?: string
+  apify_stage_history?: string
 }
 
 export interface ScrapeDbUpdateStatus {

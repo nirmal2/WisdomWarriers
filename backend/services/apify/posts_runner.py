@@ -1,6 +1,30 @@
-from typing import Any
+from datetime import datetime
+from typing import Any, TypedDict
 from backend.services.apify.client import get_apify_client
 from backend.config import get_settings
+
+
+class ApifyRunMetadata(TypedDict, total=False):
+    actor_id: str
+    run_id: str
+    dataset_id: str
+    status: str
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _prepare_usernames(usernames: list[str]) -> list[str]:
@@ -24,7 +48,7 @@ def run_posts_actor(
     only_posts_newer_than: str | None = None,
     data_detail_level: str = "basicData",
     apify_token: str | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], ApifyRunMetadata]:
     settings = get_settings()
     client = get_apify_client(apify_token)
     prepared_usernames = _prepare_usernames(usernames)
@@ -51,4 +75,13 @@ def run_posts_actor(
     except Exception:
         pass  # If log retrieval fails, just skip it
     
-    return items, logs
+    metadata: ApifyRunMetadata = {
+        "actor_id": settings.apify_posts_actor_id,
+        "run_id": str(run.get("id", "")),
+        "dataset_id": str(run.get("defaultDatasetId", "")),
+        "status": str(run.get("status", "")),
+        "started_at": _parse_datetime(run.get("startedAt")),
+        "finished_at": _parse_datetime(run.get("finishedAt")),
+    }
+
+    return items, logs, metadata

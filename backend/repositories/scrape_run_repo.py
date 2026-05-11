@@ -1,9 +1,102 @@
+import json
 from typing import Any, Optional, Sequence
 from sqlalchemy import select, func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.scrape_run import ScrapeRun
 from backend.models.scrape_run_profile_progress import ScrapeRunProfileProgress
 from datetime import datetime, timezone
+
+
+def _load_json_array(raw_value: str | None) -> list[dict[str, Any]]:
+    if not raw_value:
+        return []
+    try:
+        loaded = json.loads(raw_value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(loaded, list):
+        return []
+    return [row for row in loaded if isinstance(row, dict)]
+
+
+def _to_iso(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str):
+        trimmed = value.strip()
+        return trimmed or None
+    return None
+
+
+async def append_apify_stage_history(
+    db: AsyncSession,
+    run_id: int,
+    entry: dict[str, Any],
+) -> Optional[ScrapeRun]:
+    run = await db.get(ScrapeRun, run_id)
+    if run is None:
+        return None
+
+    history = _load_json_array(run.apify_stage_history)
+    history.append(entry)
+    run.apify_stage_history = json.dumps(history)
+    await db.flush()
+    return run
+
+
+async def update_apify_stage_metadata(
+    db: AsyncSession,
+    run_id: int,
+    stage: str,
+    metadata: dict[str, Any],
+    event_type: str = "actor_call",
+    extra: dict[str, Any] | None = None,
+) -> Optional[ScrapeRun]:
+    run = await db.get(ScrapeRun, run_id)
+    if run is None:
+        return None
+
+    stage_key = stage.strip().lower()
+    if stage_key not in {"posts", "profiles"}:
+        raise ValueError(f"Unsupported stage: {stage}")
+
+    prefix = f"apify_{stage_key}"
+    actor_id = str(metadata.get("actor_id") or "").strip() or None
+    run_external_id = str(metadata.get("run_id") or "").strip() or None
+    dataset_id = str(metadata.get("dataset_id") or "").strip() or None
+    status = str(metadata.get("status") or "").strip() or None
+
+    setattr(run, f"{prefix}_actor_id", actor_id)
+    setattr(run, f"{prefix}_run_id", run_external_id)
+    setattr(run, f"{prefix}_dataset_id", dataset_id)
+    setattr(run, f"{prefix}_status", status)
+
+    started_at = metadata.get("started_at")
+    finished_at = metadata.get("finished_at")
+    if isinstance(started_at, datetime):
+        setattr(run, f"{prefix}_started_at", started_at)
+    if isinstance(finished_at, datetime):
+        setattr(run, f"{prefix}_finished_at", finished_at)
+
+    entry: dict[str, Any] = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "stage": stage_key,
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "run_id": run_external_id,
+        "dataset_id": dataset_id,
+        "status": status,
+        "started_at": _to_iso(started_at),
+        "finished_at": _to_iso(finished_at),
+    }
+    if extra:
+        entry["extra"] = extra
+
+    history = _load_json_array(run.apify_stage_history)
+    history.append(entry)
+    run.apify_stage_history = json.dumps(history)
+    await db.flush()
+    return run
 
 
 async def create_run(db: AsyncSession, data: dict) -> ScrapeRun:

@@ -34,9 +34,9 @@ export default function ScrapePage() {
   const [newerThanValue, setNewerThanValue] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
-  const [dataDetailLevel, setDataDetailLevel] = useState<"basicData" | "detailedData">("basicData")
-  const [batchMode, setBatchMode] = useState(true)
-  const [enableEmbeddings, setEnableEmbeddings] = useState(true)
+  const [dataDetailLevel, setDataDetailLevel] = useState<"basicData" | "detailedData">("detailedData")
+  const [batchMode, setBatchMode] = useState(false)
+  const [enableEmbeddings, setEnableEmbeddings] = useState(false)
   const [apifyToken, setApifyToken] = useState("")
   const [isScrapeLocked, setIsScrapeLocked] = useState(false)
   const usernames = parseUsernames(profilesText)
@@ -377,6 +377,20 @@ export default function ScrapePage() {
             )}
           </div>
           <p className="text-xs text-gray-400 mt-1">Rows updated for the selected run.</p>
+          {statusData?.run && (
+            <div className="mt-3 grid grid-cols-1 gap-2 text-[11px] text-gray-300 sm:grid-cols-2">
+              <div className="rounded-md border border-gray-800 bg-gray-950/70 px-2.5 py-2">
+                <p className="text-gray-400">Apify Posts</p>
+                <p>Run: {statusData.run.apify_posts_run_id ?? "-"}</p>
+                <p>Dataset: {statusData.run.apify_posts_dataset_id ?? "-"}</p>
+              </div>
+              <div className="rounded-md border border-gray-800 bg-gray-950/70 px-2.5 py-2">
+                <p className="text-gray-400">Apify Profiles</p>
+                <p>Run: {statusData.run.apify_profiles_run_id ?? "-"}</p>
+                <p>Dataset: {statusData.run.apify_profiles_dataset_id ?? "-"}</p>
+              </div>
+            </div>
+          )}
           {canResumeRemaining && (
             <div className="mt-3">
               <button

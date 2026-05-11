@@ -560,10 +560,27 @@ async def run_posts_scrape(
 
                     try:
                         result = await _fetch_posts_for_username(username)
+                        apify_metadata: dict[str, Any] = {}
                         if isinstance(result, tuple):
-                            raw_items, raw_logs = result
+                            if len(result) >= 3:
+                                raw_items, raw_logs, apify_metadata = result[0], result[1], result[2] or {}
+                            else:
+                                raw_items, raw_logs = result[0], result[1]
                         else:
                             raw_items, raw_logs = result, []
+
+                        if apify_metadata:
+                            await scrape_run_repo.update_apify_stage_metadata(
+                                db,
+                                run.id,
+                                stage="posts",
+                                metadata=apify_metadata,
+                                event_type="actor_call",
+                                extra={
+                                    "username": _normalize_username_key(username),
+                                    "attempt": attempt_no,
+                                },
+                            )
 
                         if raw_logs:
                             await _extend_run_logs(db, run.id, raw_logs)
@@ -852,10 +869,26 @@ async def run_profiles_scrape(
 
                 try:
                     result = await _fetch_profile_batch(username)
+                    apify_metadata: dict[str, Any] = {}
                     if isinstance(result, tuple):
-                        raw_items, raw_logs = result
+                        if len(result) >= 3:
+                            raw_items, raw_logs, apify_metadata = result[0], result[1], result[2] or {}
+                        else:
+                            raw_items, raw_logs = result[0], result[1]
                     else:
                         raw_items, raw_logs = result, []
+
+                    if apify_metadata:
+                        await scrape_run_repo.update_apify_stage_metadata(
+                            db,
+                            run.id,
+                            stage="profiles",
+                            metadata=apify_metadata,
+                            event_type="actor_call",
+                            extra={
+                                "username": _normalize_username_key(username),
+                            },
+                        )
 
                     if raw_logs:
                         await _extend_run_logs(db, run.id, raw_logs)
@@ -1070,6 +1103,230 @@ async def run_combined_scrape(
         finalize_run=True,
         apify_token=apify_token,
     )
+
+
+async def _resolve_run_usernames(db, run: ScrapeRun) -> list[str]:
+    payload = _parse_resume_payload(run.resume_payload)
+    payload_usernames = payload.get("usernames")
+    if isinstance(payload_usernames, list) and payload_usernames:
+        return _clean_usernames([str(value) for value in payload_usernames])
+
+    progress_rows = await scrape_run_repo.get_profile_progress_rows(db, run.id)
+    if progress_rows:
+        return _clean_usernames([row.username for row in progress_rows])
+
+    scrape_profiles_result = await db.execute(select(ScrapeProfile).order_by(ScrapeProfile.position, ScrapeProfile.id))
+    return _clean_usernames([row.username for row in scrape_profiles_result.scalars().all()])
+
+
+async def replay_posts_stage_from_apify_items(
+    run_id: int,
+    raw_items: list[dict[str, Any]],
+    frequency: str = "on_demand",
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any]:
+    async with AsyncSessionLocal() as db:
+        run = await db.get(ScrapeRun, run_id)
+        if run is None:
+            raise ValueError(f"Run {run_id} not found")
+
+        requested_usernames = await _resolve_run_usernames(db, run)
+        requested_set = set(requested_usernames)
+
+        await scrape_run_repo.update_run(db, run.id, {
+            "status": "running",
+            "finished_at": None,
+            "error_message": None,
+        })
+        await _append_run_log(db, run.id, "Apify refetch: replaying posts stage into DB...")
+
+        await db.execute(delete(PostSnapshotTaggedUser).where(PostSnapshotTaggedUser.run_id == run.id))
+        await db.execute(delete(PostSnapshotMention).where(PostSnapshotMention.run_id == run.id))
+        await db.execute(delete(PostSnapshotHashtag).where(PostSnapshotHashtag.run_id == run.id))
+        await db.execute(delete(PostSnapshot).where(PostSnapshot.run_id == run.id))
+        await scrape_run_repo.reset_profile_progress(db, run.id)
+        await scrape_run_repo.initialize_profile_progress(db, run.id, requested_usernames)
+        await db.commit()
+
+        period_label = derive_period_label(frequency)
+        scraped_at = datetime.now(timezone.utc)
+        per_user_counts: dict[str, int] = {username: 0 for username in requested_usernames}
+        imported = 0
+
+        for raw in raw_items:
+            norm = normalize_post(raw)
+            url = norm.get("url", "")
+            if not url:
+                continue
+            if not _is_timestamp_within_range(norm.get("timestamp"), date_from, date_to):
+                continue
+
+            owner_username = _normalize_username_key(norm.get("owner_username") or "")
+            if not owner_username:
+                continue
+            if requested_set and owner_username not in requested_set:
+                continue
+
+            norm["owner_username"] = owner_username
+            norm["id"] = _post_id(url, period_label)
+
+            snap = await post_repo.insert_snapshot(db, {
+                "post_id": norm["id"],
+                "run_id": run.id,
+                "owner_username": owner_username,
+                "url": norm["url"],
+                "timestamp": norm.get("timestamp"),
+                "likes_count": norm.get("likes_count", 0) or 0,
+                "video_play_count": norm.get("video_play_count", 0) or 0,
+                "type": norm.get("type"),
+                "video_url": norm.get("video_url"),
+                "display_url": norm.get("display_url"),
+                "display_storage_path": norm.get("display_storage_path"),
+                "display_storage_url": norm.get("display_storage_url"),
+                "caption": norm.get("caption"),
+                "product_type": norm.get("product_type"),
+                "input_url": norm.get("input_url"),
+                "hashtags": norm.get("hashtags") or [],
+                "mentions": norm.get("mentions") or [],
+                "tagged_users": norm.get("tagged_users") or [],
+                "coauthor_producers": norm.get("coauthor_producers") or [],
+                "period_label": period_label,
+                "scraped_at": scraped_at,
+            })
+            await post_repo.replace_snapshot_hashtags(
+                db,
+                snapshot_id=snap.id,
+                post_id=norm["id"],
+                run_id=run.id,
+                period_label=period_label,
+                owner_username=owner_username,
+                hashtags=norm.get("hashtags") or [],
+            )
+            await post_repo.replace_snapshot_mentions(
+                db,
+                snapshot_id=snap.id,
+                post_id=norm["id"],
+                run_id=run.id,
+                period_label=period_label,
+                owner_username=owner_username,
+                mentions=norm.get("mentions") or [],
+            )
+            await post_repo.replace_snapshot_tagged_users(
+                db,
+                snapshot_id=snap.id,
+                post_id=norm["id"],
+                run_id=run.id,
+                period_label=period_label,
+                owner_username=owner_username,
+                tagged_users=norm.get("tagged_users") or [],
+            )
+            per_user_counts[owner_username] = per_user_counts.get(owner_username, 0) + 1
+            imported += 1
+
+        for username in requested_usernames:
+            await scrape_run_repo.mark_profile_success(db, run.id, username, per_user_counts.get(username, 0))
+
+        await scrape_run_repo.update_run(db, run.id, {
+            "status": "completed",
+            "finished_at": datetime.now(timezone.utc),
+            "items_fetched": imported,
+            "error_message": None,
+        })
+        await _append_run_log(db, run.id, f"Apify refetch replay complete for posts stage: imported {imported} post(s).")
+        await db.commit()
+
+        return {
+            "run_id": run.id,
+            "items_fetched": imported,
+            "profiles_processed": len(requested_usernames),
+        }
+
+
+async def replay_profiles_stage_from_apify_items(
+    run_id: int,
+    raw_items: list[dict[str, Any]],
+    frequency: str = "on_demand",
+) -> dict[str, Any]:
+    async with AsyncSessionLocal() as db:
+        run = await db.get(ScrapeRun, run_id)
+        if run is None:
+            raise ValueError(f"Run {run_id} not found")
+
+        requested_usernames = await _resolve_run_usernames(db, run)
+        requested_set = set(requested_usernames)
+
+        await scrape_run_repo.update_run(db, run.id, {
+            "status": "running",
+            "finished_at": None,
+            "error_message": None,
+        })
+        await _append_run_log(db, run.id, "Apify refetch: replaying profiles stage into DB...")
+
+        await db.execute(delete(ProfileSnapshot).where(ProfileSnapshot.run_id == run.id))
+        await scrape_run_repo.reset_profile_progress(db, run.id)
+        await scrape_run_repo.initialize_profile_progress(db, run.id, requested_usernames)
+        await db.commit()
+
+        period_label = derive_period_label(frequency)
+        scraped_at = datetime.now(timezone.utc)
+        imported = 0
+        seen_usernames: set[str] = set()
+
+        for raw in raw_items:
+            norm = normalize_profile(raw)
+            profile_id = norm.get("id")
+            username = _normalize_username_key(norm.get("username") or "")
+            if not profile_id or not username:
+                continue
+            if requested_set and username not in requested_set:
+                continue
+
+            profile = await profile_repo.upsert_profile(db, norm)
+            await profile_repo.insert_snapshot(db, {
+                "profile_id": profile.id,
+                "followers_count": norm["followers_count"],
+                "follows_count": norm["follows_count"],
+                "posts_count": norm["posts_count"],
+                "period_label": period_label,
+                "run_id": run.id,
+                "scraped_at": scraped_at,
+            })
+            seen_usernames.add(username)
+
+        missing_usernames: list[str] = []
+        for username in requested_usernames:
+            if username in seen_usernames:
+                await scrape_run_repo.mark_profile_success(db, run.id, username, 1)
+                imported += 1
+            else:
+                missing_usernames.append(username)
+                await scrape_run_repo.mark_profile_failed(
+                    db,
+                    run.id,
+                    username,
+                    "No profile data returned from Apify for this username.",
+                )
+
+        run_status = "failed" if missing_usernames else "completed"
+        error_message = None if not missing_usernames else f"Profiles stage completed with {len(missing_usernames)} failed profile(s)."
+
+        await scrape_run_repo.update_run(db, run.id, {
+            "status": run_status,
+            "finished_at": datetime.now(timezone.utc),
+            "items_fetched": imported,
+            "missing_usernames": json.dumps(missing_usernames),
+            "error_message": error_message,
+        })
+        await _append_run_log(db, run.id, f"Apify refetch replay complete for profiles stage: imported {imported} profile(s).")
+        await db.commit()
+
+        return {
+            "run_id": run.id,
+            "items_fetched": imported,
+            "profiles_processed": len(requested_usernames),
+            "missing_usernames": missing_usernames,
+        }
 
 
 def _looks_like_post_url(url: str) -> bool:

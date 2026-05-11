@@ -28,6 +28,16 @@ export function RecentRunsTable() {
             ),
         },
         { key: "status", label: "Status", render: r => <StatusBadge status={r.status} /> },
+        {
+          key: "apify_run",
+          label: "Apify Run",
+          render: r => r.apify_posts_run_id ?? r.apify_profiles_run_id ?? "-",
+        },
+        {
+          key: "apify_dataset",
+          label: "Dataset",
+          render: r => r.apify_posts_dataset_id ?? r.apify_profiles_dataset_id ?? "-",
+        },
         { key: "embedding_status", label: "Embeddings", render: r => <StatusBadge status={r.embedding_status} /> },
         { key: "items_fetched", label: "Items" },
         { key: "started_at", label: "Started", render: r => format(new Date(r.started_at), "MMM d, HH:mm") },

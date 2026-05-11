@@ -111,6 +111,12 @@ export interface ScrapeRunSummary {
   schedule_name: string | null
   schedule_frequency: string | null
   duration_seconds: number | null
+  apify_posts_run_id?: string | null
+  apify_posts_dataset_id?: string | null
+  apify_posts_status?: string | null
+  apify_profiles_run_id?: string | null
+  apify_profiles_dataset_id?: string | null
+  apify_profiles_status?: string | null
 }
 
 export interface SemanticPostResult {

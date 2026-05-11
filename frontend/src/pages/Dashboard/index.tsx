@@ -8,6 +8,7 @@ import { PostingTimeHeatmap } from "./PostingTimeHeatmap"
 import { ScrapeRunSummaryTable } from "./ScrapeRunSummaryTable"
 import { SemanticPostSearch } from "./SemanticPostSearch"
 import { WisdomWarriorsGradeSummaryTable } from "./WisdomWarriorsGradeSummaryTable"
+import { PostScraperKpiSection } from "./PostScraperKpiSection"
 import { FollowerGrowthChart } from "../Analytics/FollowerGrowthChart"
 import { PostVolumeChart } from "../Analytics/PostVolumeChart"
 
@@ -19,6 +20,7 @@ interface DashboardProps {
 
 type WidgetKey =
   | "kpiSection"
+  | "postScraperKpis"
   | "followerGrowth"
   | "postVolume"
   | "topProfiles"
@@ -35,6 +37,7 @@ const DASHBOARD_WIDGET_PREFS_KEY = "dashboard-widget-prefs-v1"
 
 const WIDGETS: Array<{ key: WidgetKey; label: string }> = [
   { key: "kpiSection", label: "KPI Section" },
+  { key: "postScraperKpis", label: "Post Scraper KPI" },
   { key: "followerGrowth", label: "Follower Growth" },
   { key: "postVolume", label: "Post Volume" },
   { key: "topProfiles", label: "Top Profiles" },
@@ -48,6 +51,7 @@ const WIDGETS: Array<{ key: WidgetKey; label: string }> = [
 
 const DEFAULT_WIDGET_PREFS: WidgetPrefs = {
   kpiSection: true,
+  postScraperKpis: true,
   followerGrowth: true,
   postVolume: true,
   topProfiles: true,
@@ -128,6 +132,7 @@ export default function Dashboard({ selectedSnapshotRunId, selectedScrapedAt, se
         </div>
       </div>
       {isOn("kpiSection") && <KpiSection periodLabel={periodLabel} />}
+      {isOn("postScraperKpis") && <PostScraperKpiSection maxRunId={selectedSnapshotRunId} />}
 
       {(showTrends || showTopProfiles) && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

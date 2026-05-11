@@ -17,6 +17,19 @@ class ScrapeRunRead(BaseModel):
     error_message: Optional[str] = None
     embedding_error_message: Optional[str] = None
     resume_detected: bool = False
+    apify_posts_actor_id: Optional[str] = None
+    apify_posts_run_id: Optional[str] = None
+    apify_posts_dataset_id: Optional[str] = None
+    apify_posts_started_at: Optional[datetime] = None
+    apify_posts_finished_at: Optional[datetime] = None
+    apify_posts_status: Optional[str] = None
+    apify_profiles_actor_id: Optional[str] = None
+    apify_profiles_run_id: Optional[str] = None
+    apify_profiles_dataset_id: Optional[str] = None
+    apify_profiles_started_at: Optional[datetime] = None
+    apify_profiles_finished_at: Optional[datetime] = None
+    apify_profiles_status: Optional[str] = None
+    apify_stage_history: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -52,6 +65,22 @@ class ScrapeStartRead(BaseModel):
     profiles_count: int
     run_id: int
     action: Optional[str] = None
+
+
+class ApifyRefetchRequest(BaseModel):
+    stage: Literal["posts", "profiles"]
+    include_logs: bool = True
+
+
+class ApifyRefetchRead(BaseModel):
+    run_id: int
+    stage: Literal["posts", "profiles"]
+    apify_run_id: str
+    apify_dataset_id: str
+    apify_status: Optional[str] = None
+    items_count: int = 0
+    logs_count: int = 0
+    status: str = "refetched"
 
 
 class ScrapeRunListResponse(BaseModel):

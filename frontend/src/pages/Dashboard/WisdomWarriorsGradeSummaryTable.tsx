@@ -10,12 +10,110 @@ interface WisdomWarriorsGradeSummaryTableProps {
 
 type GradeSummary = {
   grade: InfluencerGrade
-  count: number
-  totalViews: number
-  topChannels: { username: string; views: number }[]
+  dedicatedCount: number
+  inHouseCount: number
+  dedicatedTotalViews: number
+  inHouseTotalViews: number
+  dedicatedTopChannels: { username: string; views: number }[]
+  inHouseTopChannels: { username: string; views: number }[]
 }
 
 const GRADE_ORDER: InfluencerGrade[] = ["A", "B", "C", "D", "E", "Inactive"]
+const WISDOM_WARRIORS_FILTERS_STORAGE_KEY = "insta-analytics.wisdom-warriors.in-house-filters"
+const GRADE_BADGE_STYLES: Record<InfluencerGrade, string> = {
+  A: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+  B: "border-cyan-500/40 bg-cyan-500/10 text-cyan-200",
+  C: "border-sky-500/40 bg-sky-500/10 text-sky-200",
+  D: "border-amber-500/40 bg-amber-500/10 text-amber-200",
+  E: "border-rose-500/40 bg-rose-500/10 text-rose-200",
+  Inactive: "border-gray-500/40 bg-gray-500/10 text-gray-200",
+}
+
+const FILTER_MENTIONS = [
+  "ishafoundation",
+  "adiyogi.official",
+  "sadhguru",
+  "sadhgurutamil",
+  "sadhgurutelugu",
+  "sadhguru.hindiofficial",
+  "sadhguru.malayalam",
+  "sadhguru_marathi_official",
+  "sadhgurubangla",
+  "sadhguru_kannada_official",
+]
+
+const FILTER_TAGGED_USERS = [
+  "ishafoundation",
+  "adiyogi.official",
+  "sadhguru",
+  "sadhgurutamil",
+  "sadhgurutelugu",
+  "sadhguru.hindiofficial",
+  "sadhguru.malayalam",
+  "sadhguru_marathi_official",
+  "sadhgurubangla",
+  "sadhguru_kannada_official",
+]
+
+const FILTER_HASHTAGS = [
+  "Isha",
+  "Ishafoundation",
+  "Ishayogacenter",
+  "Sadhguru",
+  "Sadhgurujaggivasudev",
+  "Jaggi",
+  "Adiyogi",
+  "Linga Bhairavi",
+  "Adiyogishiva",
+  "ஈஷா",
+]
+
+const FILTER_CAPTION_KEYWORDS = [
+  "Isha",
+  "Ishafoundation",
+  "Ishayogacenter",
+  "Sadhguru",
+  "Sadhgurujaggivasudev",
+  "Jaggi",
+  "Adiyogi",
+  "Linga Bhairavi",
+  "Adiyogishiva",
+  "ஈஷா",
+  "ईशा",
+  "ఇషా",
+  "ഇഷ",
+  "ಇಶಾ",
+  "சத்குரு",
+  "సద్గురు",
+  "ಸದ್ಗುರು",
+  "സദ്‍ഗുരു",
+  "सद्गुरु",
+]
+
+function getStoredWisdomFilterList(
+  key: "hashtags" | "mentions" | "taggedUsers" | "keywords",
+  fallback: string[]
+) {
+  if (typeof window === "undefined") return fallback
+
+  try {
+    const raw = window.localStorage.getItem(WISDOM_WARRIORS_FILTERS_STORAGE_KEY)
+    if (!raw) return fallback
+
+    const parsed = JSON.parse(raw) as Partial<Record<"hashtags" | "mentions" | "taggedUsers" | "keywords", string[]>>
+    const values = parsed[key]
+    if (!Array.isArray(values)) return fallback
+
+    const cleaned = values
+      .filter((value): value is string => typeof value === "string")
+      .map(value => value.trim())
+      .filter(Boolean)
+
+    return Array.from(new Set(cleaned))
+  } catch {
+    return fallback
+  }
+}
 
 function formatViewCount(value: number) {
   return Math.round(value).toLocaleString()
@@ -23,99 +121,171 @@ function formatViewCount(value: number) {
 
 export function WisdomWarriorsGradeSummaryTable({ selectedSnapshotRunId, monthLabel }: WisdomWarriorsGradeSummaryTableProps) {
   const { data: warriors = [], isLoading: isLoadingWarriors } = useWisdomWarriors()
-  const { data: monthlyViews = [], isLoading: isLoadingViews } = useWisdomWarriorsMonthlyViews({
+  const inHouseHashtags = getStoredWisdomFilterList("hashtags", FILTER_HASHTAGS)
+  const inHouseMentions = getStoredWisdomFilterList("mentions", FILTER_MENTIONS)
+  const inHouseTaggedUsers = getStoredWisdomFilterList("taggedUsers", FILTER_TAGGED_USERS)
+  const inHouseKeywords = getStoredWisdomFilterList("keywords", FILTER_CAPTION_KEYWORDS)
+
+  const { data: dedicatedMonthlyViews = [], isLoading: isLoadingDedicatedViews } = useWisdomWarriorsMonthlyViews({
     month: monthLabel ?? "",
     applyFilters: false,
     snapshotRunId: selectedSnapshotRunId,
+    category: "Dedicated",
+  })
+
+  const { data: inHouseMonthlyViews = [], isLoading: isLoadingInHouseViews } = useWisdomWarriorsMonthlyViews({
+    month: monthLabel ?? "",
+    applyFilters: true,
+    snapshotRunId: selectedSnapshotRunId,
+    category: "In-house influencer",
+    hashtags: inHouseHashtags,
+    mentions: inHouseMentions,
+    taggedUsers: inHouseTaggedUsers,
+    keywords: inHouseKeywords,
   })
 
   const gradeSummaries = useMemo<GradeSummary[]>(() => {
-    const viewsByUsername = new Map(
-      monthlyViews.map(item => [item.username.trim().toLowerCase(), Number(item.total_views ?? 0)])
+    const dedicatedViewsByUsername = new Map(
+      dedicatedMonthlyViews.map(item => [item.username.trim().toLowerCase(), Number(item.total_views ?? 0)])
+    )
+    const inHouseViewsByUsername = new Map(
+      inHouseMonthlyViews.map(item => [item.username.trim().toLowerCase(), Number(item.total_views ?? 0)])
     )
 
     return GRADE_ORDER.map(grade => {
-      const gradeWarriors = warriors.filter(warrior => warrior.grade === grade)
-      const topChannels = gradeWarriors
+      const dedicatedWarriors = warriors.filter(
+        warrior => warrior.grade === grade && warrior.category === "Dedicated"
+      )
+      const inHouseWarriors = warriors.filter(
+        warrior => warrior.grade === grade && warrior.category === "In-house influencer"
+      )
+
+      const dedicatedTopChannels = dedicatedWarriors
         .map(warrior => ({
           username: warrior.username,
-          views: viewsByUsername.get(warrior.username.trim().toLowerCase()) ?? 0,
+          views: dedicatedViewsByUsername.get(warrior.username.trim().toLowerCase()) ?? 0,
         }))
         .filter(channel => channel.views > 0)
         .sort((a, b) => b.views - a.views || a.username.localeCompare(b.username))
         .slice(0, 10)
 
-      const totalViews = gradeWarriors.reduce(
-        (sum, warrior) => sum + (viewsByUsername.get(warrior.username.trim().toLowerCase()) ?? 0),
+      const inHouseTopChannels = inHouseWarriors
+        .map(warrior => ({
+          username: warrior.username,
+          views: inHouseViewsByUsername.get(warrior.username.trim().toLowerCase()) ?? 0,
+        }))
+        .filter(channel => channel.views > 0)
+        .sort((a, b) => b.views - a.views || a.username.localeCompare(b.username))
+        .slice(0, 10)
+
+      const dedicatedTotalViews = dedicatedWarriors.reduce(
+        (sum, warrior) => sum + (dedicatedViewsByUsername.get(warrior.username.trim().toLowerCase()) ?? 0),
+        0
+      )
+
+      const inHouseTotalViews = inHouseWarriors.reduce(
+        (sum, warrior) => sum + (inHouseViewsByUsername.get(warrior.username.trim().toLowerCase()) ?? 0),
         0
       )
 
       return {
         grade,
-        count: gradeWarriors.length,
-        totalViews,
-        topChannels,
+        dedicatedCount: dedicatedWarriors.length,
+        inHouseCount: inHouseWarriors.length,
+        dedicatedTotalViews,
+        inHouseTotalViews,
+        dedicatedTopChannels,
+        inHouseTopChannels,
       }
     })
-  }, [monthlyViews, warriors])
+  }, [dedicatedMonthlyViews, inHouseMonthlyViews, warriors])
 
-  const isLoading = isLoadingWarriors || isLoadingViews
+  const isLoading = isLoadingWarriors || isLoadingDedicatedViews || isLoadingInHouseViews
 
   return (
     <ChartCard title="Wisdom Warriors Grade Summary">
       <p className="mb-4 text-xs text-gray-400">
-        Grade-wise count of Wisdom Warriors, top 10 channels by views, and total views for {monthLabel ?? "current month"}.
+        Grade-wise Dedicated and IHI counts, top 10 channels by views, and total views for {monthLabel ?? "current month"}.
       </p>
       <p className="mb-4 text-[11px] text-gray-500">
-        Data source: post_snapshot (run_id: {selectedSnapshotRunId ?? "N/A"})
+        Data source: post_snapshot (run_id: {selectedSnapshotRunId ?? "N/A"}) • IHI views use hashtag, mention, tagged-user, and caption-keyword filters.
       </p>
 
       {isLoading ? (
         <div className="h-64 animate-pulse rounded-xl bg-gray-800/60" />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-[900px] w-full border border-gray-700 text-sm">
+        <div className="overflow-x-auto rounded-xl border border-indigo-500/20 bg-gradient-to-b from-indigo-950/20 via-gray-900/40 to-gray-950/50">
+          <table className="min-w-[980px] w-full text-sm">
             <thead>
-              <tr className="bg-gray-800/80 text-red-400">
+              <tr className="bg-indigo-950/40 text-indigo-100">
                 {gradeSummaries.map(summary => (
-                  <th key={summary.grade} className="border border-gray-700 px-3 py-2 text-left font-semibold">
-                    Grade {summary.grade}
+                  <th key={summary.grade} className="border-b border-r border-indigo-500/20 px-3 py-3 text-left font-semibold last:border-r-0">
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${GRADE_BADGE_STYLES[summary.grade]}`}
+                    >
+                      Grade {summary.grade}
+                    </span>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              <tr className="bg-gray-900/80 align-top text-red-300">
+              <tr className="align-top text-gray-200">
                 {gradeSummaries.map(summary => (
-                  <td key={summary.grade} className="border border-gray-700 px-3 py-2">
-                    <p className="font-semibold">Number of Grade {summary.grade} WWs</p>
-                    <p className="mt-1 text-white">{summary.count.toLocaleString()}</p>
+                  <td key={summary.grade} className="border-b border-r border-indigo-500/15 px-3 py-3 align-top last:border-r-0">
+                    <div className="rounded-lg border border-indigo-500/20 bg-gray-950/60 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-indigo-200/80">Profiles</p>
+                      <p className="mt-1 text-white">Dedicated: {summary.dedicatedCount.toLocaleString()}</p>
+                      <p className="text-white">IHI: {summary.inHouseCount.toLocaleString()}</p>
+                    </div>
                   </td>
                 ))}
               </tr>
-              <tr className="bg-gray-800/40 align-top text-red-300">
+              <tr className="align-top text-gray-200">
                 {gradeSummaries.map(summary => (
-                  <td key={summary.grade} className="border border-gray-700 px-3 py-2">
-                    <p className="font-semibold">Top 10 channels (wrt views)</p>
-                    {summary.topChannels.length === 0 ? (
-                      <p className="mt-1 text-gray-400">No channels</p>
+                  <td key={summary.grade} className="border-b border-r border-indigo-500/15 px-3 py-3 align-top last:border-r-0">
+                    <div className="rounded-lg border border-fuchsia-500/20 bg-fuchsia-950/10 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-fuchsia-200/80">Top 10 Dedicated (views)</p>
+                    {summary.dedicatedTopChannels.length === 0 ? (
+                      <p className="mt-1 text-gray-400">No Dedicated channels</p>
                     ) : (
-                      <ol className="mt-1 space-y-1 text-xs text-gray-100">
-                        {summary.topChannels.map(channel => (
-                          <li key={`${summary.grade}-${channel.username}`}>
-                            @{channel.username} ({formatViewCount(channel.views)})
+                      <ol className="mt-2 space-y-1 text-xs text-gray-100">
+                        {summary.dedicatedTopChannels.map(channel => (
+                          <li key={`${summary.grade}-dedicated-${channel.username}`} className="flex items-center justify-between gap-2">
+                            <span className="truncate">@{channel.username}</span>
+                            <span className="text-indigo-100">{formatViewCount(channel.views)}</span>
                           </li>
                         ))}
                       </ol>
                     )}
+                    </div>
+
+                    <div className="mt-3 rounded-lg border border-indigo-500/20 bg-indigo-950/10 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-indigo-200/80">Top 10 IHI (views)</p>
+                      {summary.inHouseTopChannels.length === 0 ? (
+                        <p className="mt-1 text-gray-400">No IHI channels</p>
+                      ) : (
+                        <ol className="mt-2 space-y-1 text-xs text-gray-100">
+                          {summary.inHouseTopChannels.map(channel => (
+                            <li key={`${summary.grade}-in-house-${channel.username}`} className="flex items-center justify-between gap-2">
+                              <span className="truncate">@{channel.username}</span>
+                              <span className="text-indigo-100">{formatViewCount(channel.views)}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </div>
                   </td>
                 ))}
               </tr>
-              <tr className="bg-gray-900/80 text-red-300">
+              <tr className="align-top text-gray-200">
                 {gradeSummaries.map(summary => (
-                  <td key={summary.grade} className="border border-gray-700 px-3 py-2">
-                    <p className="font-semibold">Total Views</p>
-                    <p className="mt-1 text-white">{formatViewCount(summary.totalViews)}</p>
+                  <td key={summary.grade} className="border-r border-indigo-500/15 px-3 py-3 align-top last:border-r-0">
+                    <div className="rounded-lg border border-indigo-500/20 bg-gray-950/60 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-indigo-200/80">Total Views</p>
+                      <p className="mt-1 text-white">Dedicated: {formatViewCount(summary.dedicatedTotalViews)}</p>
+                      <p className="text-white">IHI: {formatViewCount(summary.inHouseTotalViews)}</p>
+                    </div>
                   </td>
                 ))}
               </tr>

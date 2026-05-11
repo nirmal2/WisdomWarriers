@@ -25,6 +25,16 @@ export function ScrapeRunSummaryTable({ maxRunId }: ScrapeRunSummaryTableProps) 
           { key: "id", label: "#", sortable: true },
           { key: "scraper_type", label: "Type" },
           { key: "schedule_name", label: "Schedule", render: row => row.schedule_name ?? "Manual" },
+          {
+            key: "apify_run",
+            label: "Apify Run",
+            render: row => row.apify_posts_run_id ?? row.apify_profiles_run_id ?? "-",
+          },
+          {
+            key: "apify_dataset",
+            label: "Dataset",
+            render: row => row.apify_posts_dataset_id ?? row.apify_profiles_dataset_id ?? "-",
+          },
           { key: "duration_seconds", label: "Duration", sortable: true, render: row => formatDuration(row.duration_seconds) },
           { key: "items_fetched", label: "Items", sortable: true },
           { key: "status", label: "Status", render: row => <StatusBadge status={row.status} /> },

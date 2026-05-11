@@ -1,4 +1,6 @@
+import asyncio
 import json
+from functools import partial
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,8 @@ from backend.schemas.scrape import (
     ScrapeProfileProgressRowRead,
     ScrapeRequest,
     CombinedScrapeRequest,
+    ApifyRefetchRequest,
+    ApifyRefetchRead,
     ScrapeStartRead,
     ScrapeStatusRead,
     ScrapeRunRead,
@@ -46,8 +50,12 @@ from backend.services.scrape_service import (
     build_posts_resume_payload,
     build_profiles_resume_payload,
     build_combined_resume_payload,
+    replay_posts_stage_from_apify_items,
+    replay_profiles_stage_from_apify_items,
 )
+from backend.services.apify.run_refetch import refetch_apify_run_output
 from backend.repositories.scrape_run_repo import (
+    update_apify_stage_metadata,
     create_run,
     get_latest_post_deltas,
     get_profile_deltas,
@@ -98,6 +106,44 @@ def _resume_detected_from_raw_logs(raw_logs: str | None) -> bool:
     if not isinstance(lines, list):
         return False
     return any(isinstance(line, str) and RESUME_LOG_MARKER in line for line in lines)
+
+
+def _extract_apify_token_from_resume_payload(raw_payload: str | None) -> str | None:
+    if not raw_payload:
+        return None
+    try:
+        payload = json.loads(raw_payload)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    token = payload.get("apify_token")
+    if isinstance(token, str) and token.strip():
+        return token.strip()
+    return None
+
+
+def _parse_resume_payload(raw_payload: str | None) -> dict:
+    if not raw_payload:
+        return {}
+    try:
+        payload = json.loads(raw_payload)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _append_lines_to_raw_logs(raw_logs: str | None, lines_to_add: list[str], max_lines: int = 1200) -> str:
+    lines: list[str] = []
+    if raw_logs:
+        try:
+            loaded = json.loads(raw_logs)
+            if isinstance(loaded, list):
+                lines = [item for item in loaded if isinstance(item, str)]
+        except (json.JSONDecodeError, TypeError):
+            lines = []
+    lines.extend([line for line in lines_to_add if isinstance(line, str)])
+    return json.dumps(lines[-max_lines:])
 
 
 def _build_insights(summary: dict, profile_deltas: list[dict], latest_post_deltas: list[dict]) -> list[InsightRead]:
@@ -332,6 +378,87 @@ async def get_runs(
             })
         )
     return ScrapeRunListResponse(items=parsed_items, total=total)
+
+
+@router.post("/runs/{run_id}/apify-refetch", response_model=ApifyRefetchRead)
+async def refetch_run_from_apify(
+    run_id: int,
+    req: ApifyRefetchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApifyRefetchRead:
+    run = await db.get(ScrapeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status == "running":
+        raise HTTPException(status_code=409, detail="Run is currently running")
+
+    stage = req.stage
+    apify_run_id = getattr(run, f"apify_{stage}_run_id", None)
+    apify_dataset_id = getattr(run, f"apify_{stage}_dataset_id", None)
+    apify_actor_id = getattr(run, f"apify_{stage}_actor_id", None)
+    if not apify_run_id or not apify_dataset_id:
+        raise HTTPException(status_code=400, detail=f"No stored Apify metadata for stage '{stage}'")
+
+    apify_token = _extract_apify_token_from_resume_payload(run.resume_payload)
+    payload = _parse_resume_payload(run.resume_payload)
+    frequency = str(payload.get("frequency") or "on_demand")
+    date_from = payload.get("date_from")
+    date_to = payload.get("date_to")
+
+    loop = asyncio.get_event_loop()
+    items, logs, metadata = await loop.run_in_executor(
+        None,
+        partial(refetch_apify_run_output, apify_run_id, apify_dataset_id, apify_token),
+    )
+    metadata["actor_id"] = apify_actor_id
+
+    await update_apify_stage_metadata(
+        db,
+        run.id,
+        stage=stage,
+        metadata=metadata,
+        event_type="refetch",
+        extra={
+            "items_count": len(items),
+            "logs_count": len(logs),
+        },
+    )
+
+    summary_line = (
+        f"Apify refetch ({stage}) completed: run_id={metadata.get('run_id')}, "
+        f"dataset_id={metadata.get('dataset_id')}, items={len(items)}, logs={len(logs)}"
+    )
+    if req.include_logs:
+        run.raw_logs = _append_lines_to_raw_logs(run.raw_logs, [summary_line, *logs])
+    else:
+        run.raw_logs = _append_lines_to_raw_logs(run.raw_logs, [summary_line])
+    await db.commit()
+
+    if stage == "posts":
+        replay_result = await replay_posts_stage_from_apify_items(
+            run_id=run.id,
+            raw_items=items,
+            frequency=frequency,
+            date_from=date_from if isinstance(date_from, str) else None,
+            date_to=date_to if isinstance(date_to, str) else None,
+        )
+    else:
+        replay_result = await replay_profiles_stage_from_apify_items(
+            run_id=run.id,
+            raw_items=items,
+            frequency=frequency,
+        )
+
+    return ApifyRefetchRead(
+        run_id=run.id,
+        stage=stage,
+        apify_run_id=str(metadata.get("run_id") or apify_run_id),
+        apify_dataset_id=str(metadata.get("dataset_id") or apify_dataset_id),
+        apify_status=str(metadata.get("status") or "") or None,
+        items_count=int(replay_result.get("items_fetched", len(items))),
+        logs_count=len(logs),
+        status="refetched",
+    )
 
 
 @router.get("/runs/{run_id}/profile-progress", response_model=ScrapeProfileProgressListResponse)

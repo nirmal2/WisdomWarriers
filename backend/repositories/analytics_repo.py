@@ -379,7 +379,13 @@ async def get_scrape_run_summary(db: AsyncSession, limit: int = 10, max_run_id: 
             embedding_error_message,
             schedule_name,
             schedule_frequency,
-            duration_seconds
+            duration_seconds,
+            apify_posts_run_id,
+            apify_posts_dataset_id,
+            apify_posts_status,
+            apify_profiles_run_id,
+            apify_profiles_dataset_id,
+            apify_profiles_status
         FROM scrape_run_summary
     """
     params: dict[str, int] = {"limit": limit}
